@@ -6,8 +6,7 @@ Build script for Flightgear on Unix systems.
 
 Status:
 
-    As of 2020-06-19 this is very experimental, and has been tested only on a
-    single Linux system.
+    As of 2020-07-05 we can build on Linux Devuan Beowulf and OpenBSD 6.7.
 
 
 Requirements:
@@ -34,6 +33,7 @@ Requirements:
             libqt5svg5-dev \
             libqt5websockets5-dev \
             libudev-dev \
+            openscenegraph \
             pkg-config \
             qml-module-qtquick2 \
             qml-module-qtquick-dialogs \
@@ -45,6 +45,13 @@ Requirements:
             qtdeclarative5-private-dev \
             qttools5-dev \
             qttools5-dev-tools \
+    
+    For OpenBSD:
+        pkg_add \
+                freeglut \
+                openscenegraph \
+                qtdeclarative \
+                
 
 Usage:
 
@@ -54,14 +61,8 @@ Usage:
         plib/
         simgear/
         fgdata/
-        openscenegraph/
         
     Each of these will typically be a git checkout.
-    
-    We don't build openscenegraph ourselves, but expect it to be built separately and installed in
-    a particular place, so you need to do:
-    
-        cd openscenegraph; cmake -DCMAKE_INSTALL_PREFIX=`pwd`/install .; make -j 3; make install
     
     In this directory, run this script (wherever it happens to be).
     
@@ -178,6 +179,7 @@ License:
 
 import os
 import re
+import resource
 import subprocess
 import sys
 import textwrap
@@ -188,11 +190,19 @@ import walk
 
 g_build_debug = 1
 g_build_optimise = 1
-g_compositor = 0
+g_compositor = 1
 g_concurrency = 0
 g_force = None
 g_outdir = 'build-walk'
 g_verbose = None
+g_clang = False
+
+g_os = os.uname()[0]
+g_openbsd = g_os == 'OpenBSD'
+g_linux = g_os == 'Linux'
+
+if g_openbsd:
+    g_clang = True
 
 def system( command, walk_path, description=None, verbose=None):
     '''
@@ -212,7 +222,7 @@ def system( command, walk_path, description=None, verbose=None):
     if e:
         raise Exception( 'command failed: %s' % command)
 
-def system_concurrent( walk_concurrent, command, walk_path, description=None, verbose=None):
+def system_concurrent( walk_concurrent, command, walk_path, description=None, verbose=None, command_compare=None):
     '''
     Wrapper for walk_concurrent.system() which sets default verbose and force
     flags.
@@ -225,6 +235,7 @@ def system_concurrent( walk_concurrent, command, walk_path, description=None, ve
             verbose=verbose,
             force=g_force,
             description=description,
+            command_compare=command_compare,
             )
 
 def file_write( text, path, verbose=None):
@@ -304,9 +315,9 @@ def get_files():
             'flightgear/3rdparty/iaxclient/lib/video_portvideo.cpp',
             'flightgear/3rdparty/iaxclient/lib/winfuncs.c',
             'flightgear/3rdparty/iaxclient/lib/win/iaxclient_dll.c',
-            'flightgear/3rdparty/joystick/jsBSD.cxx',
+            #'flightgear/3rdparty/joystick/jsBSD.cxx',
             'flightgear/3rdparty/joystick/jsMacOSX.cxx',
-            'flightgear/3rdparty/joystick/jsNone.cxx',
+            #'flightgear/3rdparty/joystick/jsNone.cxx',
             'flightgear/3rdparty/joystick/jsWindows.cxx',
             'flightgear/examples/netfdm/main.cpp',
             'flightgear/scripts/example/fgfsclient.c',
@@ -337,9 +348,6 @@ def get_files():
             'flightgear/src/Scripting/ClipboardWindows.cxx',
             'flightgear/test_suite/*',
             'flightgear/utils/*',
-            #'openscenegraph/applications/*',
-            #'openscenegraph/examples/*',
-            #'openscenegraph/src/OpenThreads/win32/*',
             'plib/demos/*',
             'plib/examples/*',
             'plib/src/fnt/fntBitmap.cxx',
@@ -439,6 +447,23 @@ def get_files():
             'simgear/simgear/xml/testEasyXML.cxx',
             ]
     
+    if g_openbsd:
+        exclude_patterns += [
+                'flightgear/3rdparty/hidapi/linux/*',
+                'flightgear/3rdparty/iaxclient/lib/audio_alsa.c',
+                'flightgear/3rdparty/iaxclient/lib/libspeex/*',
+                'flightgear/3rdparty/joystick/jsLinux.cxx',
+                'flightgear/3rdparty/joystick/jsBSD.cxx',
+                'flightgear/src/Input/FGLinuxEventInput.cxx',
+                #'plib/*',
+                'flightgear/src/Input/FGHIDEventInput.cxx',
+                ]
+    else:
+        exclude_patterns += [
+                'flightgear/3rdparty/joystick/jsBSD.cxx',
+                'flightgear/3rdparty/joystick/jsNone.cxx',
+                ]
+    
     if g_compositor:
         exclude_patterns += [
                 'flightgear/src/Viewer/CameraGroup_legacy.cxx',
@@ -460,10 +485,8 @@ def get_files():
     files_flightgear = get_gitfiles( 'flightgear')
     files_simgear = get_gitfiles( 'simgear')
     files_plib = get_gitfiles( 'plib')
-    files_openscenegraph = get_gitfiles( 'openscenegraph')
 
     all_files = ([]
-            #+ files_openscenegraph
             + files_flightgear
             + files_simgear
             + files_plib
@@ -498,15 +521,48 @@ def get_files():
     return all_files, ret
 
 
-def build():
-    all_files, src_fgfs = get_files()
+_gcc_command_compare_regex = None
+def gcc_command_compare( a, b):
+    global _gcc_command_compare_regex
+    if _gcc_command_compare_regex is None:
+        _gcc_command_compare_regex = re.compile( ' (-Wno-[^ ]+)|(-std=[^ ]+)')
+    aa = re.sub( _gcc_command_compare_regex, '', a)
+    bb = re.sub( _gcc_command_compare_regex, '', b)
+    #print( 'aa=%s' % aa)
+    #print( 'bb=%s' % bb)
+    ret = aa != bb
+    ret0 = a != b
+    if not ret and ret0:
+        pass
+        #print( 'ignoring command diff:\n    %s\n    %s' % (a, b))
+    if ret and not ret0:
+        assert 0
+    return ret
 
+if 0:
+    print( re.sub( ' -Wno-[^ ]+', '', 'gcc -o foo bar.c -Wno-xyz -Werror'))
+    print( gcc_command_compare( 'gcc -o foo bar.c -Wno-xyz -Werror', 'gcc -o foo bar.c -Wno-xyz -Werror'))
+    print( gcc_command_compare( 'gcc -o foo bar.c -Wno-xyz -Werror', 'gcc -o foo bar.c -Werror'))
+    print( gcc_command_compare( 'gcc -o foo bar.c -Wno-xyz -Werror', 'gcc -o foo bar.c -Wno-q -Werror'))
+    print( gcc_command_compare( 'gcc -o foo bar.c -Wno-xyz -Werror', 'gcc -o foo bar.c -O2 -Werror'))
+
+def build( link_only=False):
+
+    if g_openbsd:
+        # clang needs around 2G to compile
+        # flightgear/src/Scripting/NasalCanvas.cxx.
+        #
+        soft, hard = resource.getrlimit( resource.RLIMIT_DATA)
+        soft_new = min(4*2**30, hard)
+        resource.setrlimit( resource.RLIMIT_DATA, (soft_new, hard))
+        walk.log( f'Have changed RLIMIT_DATA from {soft} to {soft_new}')
+
+    all_files, src_fgfs = get_files()
 
     # Generate .moc files. We look for files containing Q_OBJECT.
     #
-    g_osname = os.uname()[0]
     moc = 'moc'
-    if g_osname == 'OpenBSD':
+    if g_openbsd:
         moc = 'moc-qt5'
     for i in all_files:
         if i.startswith( 'flightgear/src/GUI/') or i.startswith( 'flightgear/src/Viewer/'):
@@ -536,7 +592,7 @@ def build():
 
     # Create flightgear's config file.
     #
-    fg_version = open('flightgear/version').read().strip()
+    fg_version = open('flightgear/flightgear-version').read().strip()
     root = os.path.abspath( '.')
 
     file_write( textwrap.dedent('''
@@ -634,6 +690,7 @@ def build():
             #define HAVE_TIMEGM
             #define HAVE_SYS_TIME_H
             #define HAVE_UNISTD_H
+            #define HAVE_STD_INDEX_SEQUENCE
             ''')
             ,
             '%s/walk-generated/simgear/simgear_config.h' % g_outdir,
@@ -695,23 +752,13 @@ def build():
     src_fgfs.append( '%s/walk-generated/EmbeddedResources/FlightGear-resources.cxx' % g_outdir)
 
 
-    simgear_version = open('simgear/version').read().strip()
+    simgear_version = open('simgear/simgear-version').read().strip()
     file_write(
             '#define SIMGEAR_VERSION %s\n' % simgear_version,
             '%s/walk-generated/simgear/version.h' % g_outdir,
             )
 
-    if g_osname == 'Linux':
-        system(
-                '/usr/lib/qt5/bin/rcc'
-                        ' --name resources'
-                        ' --output %s/walk-generated/flightgear/src/GUI/qrc_resources.cpp'
-                        ' flightgear/src/GUI/resources.qrc'
-                        % g_outdir
-                        ,
-                '%s/walk-generated/flightgear/src/GUI/qrc_resources.cpp.walk' % g_outdir,
-                )
-    elif g_osname == 'OpenBSD':
+    if g_openbsd:
         system(
                 'rcc'
                         ' -name resources'
@@ -722,19 +769,30 @@ def build():
                 '%s/walk-generated/flightgear/src/GUI/qrc_resources.cpp.walk' % g_outdir,
                 )
     else:
-        assert 0
+        system(
+                '/usr/lib/qt5/bin/rcc'
+                        ' --name resources'
+                        ' --output %s/walk-generated/flightgear/src/GUI/qrc_resources.cpp'
+                        ' flightgear/src/GUI/resources.qrc'
+                        % g_outdir
+                        ,
+                '%s/walk-generated/flightgear/src/GUI/qrc_resources.cpp.walk' % g_outdir,
+                )
     src_fgfs.append( '%s/walk-generated/flightgear/src/GUI/qrc_resources.cpp' % g_outdir)
 
+    uic = 'uic'
+    if g_openbsd:
+        uic = '/usr/local/lib/qt5/bin/uic'
     system(
-            'uic -o %s/walk-generated/Include/ui_InstallSceneryDialog.h'
-                    ' flightgear/src/GUI/InstallSceneryDialog.ui' % g_outdir
+            '%s -o %s/walk-generated/Include/ui_InstallSceneryDialog.h'
+                    ' flightgear/src/GUI/InstallSceneryDialog.ui' % (uic, g_outdir)
                     ,
             '%s/walk-generated/Include/ui_InstallSceneryDialog.h.walk' % g_outdir,
             )
 
     e = system(
-            'uic -o %s/walk-generated/ui_SetupRootDialog.h'
-                    ' flightgear/src/GUI/SetupRootDialog.ui' % g_outdir
+            '%s -o %s/walk-generated/ui_SetupRootDialog.h'
+                    ' flightgear/src/GUI/SetupRootDialog.ui' % (uic, g_outdir)
                     ,
             '%s/walk-generated/ui_SetupRootDialog.h.walk' % g_outdir,
             )
@@ -760,9 +818,36 @@ def build():
 
     # Set up compile/link commands.
     #
-    gcc_base = 'gcc -pthread -W -Wall -fPIC -Wno-unused-parameter'
-    gpp_base = 'g++ -pthread -W -Wall -fPIC -Wno-unused-parameter'
-
+    gcc_base = 'cc'
+    gpp_base = 'c++ -std=gnu++17'
+    if g_clang:
+        gcc_base = 'clang'
+        gpp_base = 'clang++ -std=c++14'
+    gcc_base += ' -pthread -W -Wall -fPIC -Wno-unused-parameter'
+    gpp_base += ' -pthread -W -Wall -fPIC -Wno-unused-parameter'
+    
+    # On Linux we end up with compilation errors if we use the results of the
+    # feature checking below. But things seem to build ok without.
+    #
+    # On OpenBSD, we need to do the feature checks, and thy appear to work.
+    #
+    cpp_feature_defines = ''
+    if g_openbsd:
+        with open( 'simgear/CMakeModules/CheckCXXFeatures.cmake') as f:
+            text = f.read()
+        for m in re.finditer('check_cxx_source_compiles[(]"([^"]*)" ([A-Z_]+)', text, re.M):
+            code = m.group(1)
+            define = m.group(2)
+            with open( f'{g_outdir}/test.cpp', 'w') as f:
+                f.write(code)
+            e = os.system( f'{gpp_base} -o /dev/null {g_outdir}/test.cpp 1>/dev/null 2>/dev/null')
+            if e == 0:
+                #walk.log( f'c++ feature: defining {define}')
+                cpp_feature_defines += f' -D {define}'
+            else:
+                pass
+                #walk.log( f'c++ feature: not defining {define}')
+        walk.log( f'cpp_feature_defines: {cpp_feature_defines}')
 
     # Define compile/link commands. For linking, we write the .o filenames to a
     # separate file and use gcc's @<filename> to avoid the command becoming too
@@ -771,6 +856,8 @@ def build():
     link_command = gpp_base
     exe = '%s/fgfs' % g_outdir
 
+    if g_clang:
+        exe += ',clang'
     if g_build_debug:
         exe += ',debug'
         link_command += ' -g'
@@ -783,60 +870,93 @@ def build():
 
     exe += '.exe'
 
-    # Should probably use just one pkg-config output for everything.
-    #
-    cflags_libs = subprocess.check_output( 'pkg-config --cflags Qt5Gui Qt5Widgets Qt5Qml Qt5Quick', shell=1).decode( 'latin-1').strip()
-    cflags_libs2 = subprocess.check_output( 'pkg-config --cflags dbus-1 Qt5Gui Qt5Widgets Qt5Qml Qt5Quick', shell=1).decode( 'latin-1').strip()
-    cflags_libs3 = subprocess.check_output( 'pkg-config --cflags dbus-1', shell=1).decode( 'latin-1').strip()
-
-    cflags_libs4 = subprocess.check_output( 'pkg-config x11 Qt5Core Qt5Gui Qt5Quick Qt5Network Qt5Widgets Qt5Qml Qt5Svg --libs', shell=1).decode( 'latin-1').strip()
-
-    link_command += ' -o %s' % exe
-    link_command += (
-            ' -l asound'
-            ' -l curl'
-            ' -l dbus-1'
-            ' -l dl'
-            ' -l event'
-            ' -l GL'
-            ' -l GLU'
-            ' -l glut'
-            ' -l openal'
-            ' -l OpenThreads'
-            ' -l udev'
-            ' -l z'
-            ' -pthread'
+    libs = (
+            ' Qt5Core'
+            ' Qt5Gui'
+            ' Qt5Qml'
+            ' Qt5Quick'
+            ' Qt5Widgets'
+            ' dbus-1'
+            ' gl'
+            ' openscenegraph'
+            ' x11'
             )
+    if g_openbsd:
+        libs += (
+                ' glu'
+                ' libcurl'
+                ' libevent'
+                ' openal'
+                ' openthreads'
+                ' speex'
+                ' speexdsp'
+                )
     
-    link_command += (
-            ' -L openscenegraph/install/lib'
-            ' -l osg'
-            ' -l osgDB'
-            ' -l osgFX'
-            ' -l osgGA'
-            ' -l osgParticle'
-            ' -l osgSim'
-            ' -l osgText'
-            ' -l osgUtil'
-            ' -l osgViewer'
-            )
-    link_command += ' %s' % cflags_libs4
-
-    link_command_files = ''
+    libs_cflags     = ' ' + subprocess.check_output( 'pkg-config --cflags %s' % libs, shell=1).decode( 'latin-1').strip()
+    libs_linkflags  = ' ' + subprocess.check_output( 'pkg-config --libs %s'   % libs, shell=1).decode( 'latin-1').strip()
+    
+    
+    if 0:
+        # Show linker information.
+        link_command += ' -t'
+        link_command += ' --verbose'
+    
+    link_command += ' -o %s' % exe
+    
+    if g_linux:
+        link_command += (
+                ' -l asound'
+                ' -l curl'
+                ' -l dbus-1'
+                ' -l dl'
+                ' -l event'
+                ' -l udev'
+                ' -l GL'
+                ' -l GLU'
+                ' -l glut'
+                ' -l openal'
+                ' -l OpenThreads'
+                ' -l z'
+                ' -pthread'
+                )
+    
+    if g_linux:
+        link_command += (
+                ' -l osg'
+                ' -l osgDB'
+                ' -l osgFX'
+                ' -l osgGA'
+                ' -l osgParticle'
+                ' -l osgSim'
+                ' -l osgText'
+                ' -l osgUtil'
+                ' -l osgViewer'
+                )
+    
+    link_command += ' %s' % libs_linkflags
+        
+    link_command_files = []
 
     # Set things up so walk.py can run compile commands concurrently.
     #
     walk_concurrent = walk.Concurrent( g_concurrency)
     try:
 
-        # Compile each source file. While doing so, we also add to the final link
-        # command
+        # Compile each source file. While doing so, we also add to the final
+        # link command.
         #
+        # We sort the source files so that we compile recently-modified ones
+        # first, which helps save time when investigating compile failures.
+        #
+        
         progress_t = 0
+        src_fgfs.sort( key=lambda path: -walk.mtime( path))
+        
         for i, path in enumerate( src_fgfs):
-
+        
             walk.log_prefix_set( '[% 3i%%] ' % (100 * i / len(src_fgfs)))
-            walk.log_ping( 'looking at: %s' % path, 20)
+            walk.log_ping( 'looking at: %s' % path, 10)
+            #walk.log( 'looking at: %s' % path)
 
             if path.endswith( '.c'):
                 command = gcc_base
@@ -847,6 +967,8 @@ def build():
 
             path_o = '%s/%s' % (g_outdir, path)
 
+            if g_clang:
+                path_o += ',clang'
             if g_build_debug:
                 command += ' -g'
                 path_o += ',debug'
@@ -892,6 +1014,16 @@ def build():
                     'simgear/simgear/canvas/ShivaVG/src/shPipeline.c',
                     ):
                 command += ' -Wno-implicit-fallthrough'
+            
+            if g_clang and (0
+                    or path.startswith( 'flightgear/')
+                    or path.startswith( 'simgear/')
+                    or path.startswith( 'plib/')
+                    ):
+                command += (
+                        ' -Wno-inconsistent-missing-override'
+                        ' -Wno-overloaded-virtual'
+                        )
             
             if (0
                     or path.startswith( 'flightgear/3rdparty/flite_hts_engine/flite/')
@@ -980,7 +1112,7 @@ def build():
                     ):
                 command += ' -Wno-'
             
-            
+            command += libs_cflags
             
             # Include/define flags.
             if (0
@@ -988,14 +1120,13 @@ def build():
                     or path.startswith( '%s/flightgear/' % g_outdir)
                     or path.startswith( 'simgear/')
                     or path.startswith( '%s/simgear/' % g_outdir)
-                    #or path.startswith( 'openscenegraph/')
+                    or path.startswith( '%s/walk-generated/flightgear/' % g_outdir)
                     ):
-                command += (
-                        ' -I openscenegraph/install/include'
-                        )
+                
+                command += cpp_feature_defines
 
             if path.startswith( 'flightgear/') or path.startswith( '%s/flightgear/' % g_outdir):
-                stdcpp = ' -std=gnu++11'
+                stdcpp = ''
                 if path.endswith( '.c'):
                     stdcpp = ''
                 command += (
@@ -1018,13 +1149,14 @@ def build():
                         ' -I flightgear/3rdparty/iaxclient/lib/portaudio/bindings/cpp/include'
                         ' -I flightgear/3rdparty/iaxclient/lib/portaudio/include'
                         ' -I flightgear/3rdparty/iaxclient/lib/libiax2/src'
-                        ' -I flightgear/3rdparty/iaxclient/lib/libspeex/include'
                         ' -I flightgear/3rdparty/iaxclient/lib/portmixer/px_common'
                         ' -I flightgear/3rdparty/iaxclient/lib/gsm/inc'
                         ' -D LIBIAX'
                         ' -D AUDIO_OPENAL'
                         ' -D ENABLE_ALSA'
                         )
+                if g_linux:
+                    command += ' -I flightgear/3rdparty/iaxclient/lib/libspeex/include'
 
             if path.startswith( 'flightgear/3rdparty/joystick'):
                 command += (
@@ -1059,14 +1191,14 @@ def build():
                         ' -I %s/walk-generated/Include'
                         ' -I flightgear/3rdparty/fonts'
                         ' -I %s/flightgear/src/GUI'
-                        ' %s' % (g_outdir, g_outdir, cflags_libs,)
+                        % (g_outdir, g_outdir)
                         )
 
 
             if path.startswith( 'flightgear/src/Viewer/') or path.startswith( '%s/flightgear/src/Viewer/' % g_outdir):
                 command += (
                         ' -D HAVE_PUI'
-                        ' %s' % cflags_libs
+                        #' %s' % cflags_libs
                         )
 
             if path.startswith( 'flightgear/src/Input/'):
@@ -1093,11 +1225,17 @@ def build():
                         )
 
 
+            if path.startswith( 'flightgear/src/Airports/'):
+                if g_linux:
+                    command += (
+                            ' -DBOOST_BIMAP_DISABLE_SERIALIZATION -DBOOST_NO_STDLIB_CONFIG -DBOOST_NO_AUTO_PTR -DBOOST_NO_CXX98_BINDERS'
+                            )
+            
             if path.startswith( 'flightgear/src/Main/'):
                 command += (
                         ' -I flightgear'
                         ' -D HAVE_CONFIG_H'
-                        ' %s' % cflags_libs2
+                        #' %s' % cflags_libs2
                         )
 
             if path.startswith( 'flightgear/src/MultiPlayer'):
@@ -1113,7 +1251,7 @@ def build():
             if path.startswith( 'flightgear/src/Network'):
                 command += (
                         ' -I flightgear'
-                        ' %s' % cflags_libs3
+                        #' %s' % cflags_libs3
                 )
 
             if path.startswith( 'flightgear/src/Scripting/'):
@@ -1139,10 +1277,15 @@ def build():
                         ' -I simgear/3rdparty/udns'
                         ' -I %s/walk-generated'
                         ' -I %s/walk-generated/simgear'
-                        ' -D HAVE_STD_INDEX_SEQUENCE'
+                        ' -D HAVE_STD_INDEX_SEQUENCE' # prob not necessary.
                         % (g_outdir, g_outdir)
                         )
-
+            if (0
+                    or path.startswith( 'simgear/simgear/canvas/Canvas.cxx')
+                    or path.startswith( 'flightgear/src/AIModel/AIBase.cxx')
+                    ):
+                command += cpp_feature_defines
+            
             if path.startswith( 'simgear/simgear/sound'):
                 command += (
                         ' -D ENABLE_SOUND'
@@ -1186,6 +1329,9 @@ def build():
                         ' -Wno-unused-variable'
                         ' -Wno-write-strings'
                         )
+                
+                if g_openbsd:
+                    command += ' -I /usr/X11R6/include'
 
             if path.startswith( 'plib/src/ssgAux'):
                 command += (
@@ -1196,6 +1342,11 @@ def build():
                 command += (
                         ' -I simgear'
                         )
+            
+            #if g_openbsd and path.startswith( '%s/walk-generated/flightgear/src/GUI' % g_outdir):
+            #    command += (
+            #            #' %s' % cflags_libs5
+            #            )
 
             if path.startswith( 'flightgear/3rdparty/flite_hts_engine'):
                 command += (
@@ -1219,8 +1370,8 @@ def build():
                         )
 
             if path.startswith( 'flightgear/src/Network/Swift'):
-                command += (
-                        ' %s' % cflags_libs3
+                command += (''
+                        #' %s' % cflags_libs3
                         )
 
             if ( 0
@@ -1237,53 +1388,66 @@ def build():
 
 
             path_o += '.o'
-            link_command_files += ' %s' % path_o
+            link_command_files.append( ' %s' % path_o)
 
-            command += ' -o %s %s' % (path_o, path)
+            if not link_only:
+                command += ' -o %s %s' % (path_o, path)
 
-            # Tell walk to schedule running of the compile command if necessary.
-            #
-            system_concurrent(
-                    walk_concurrent,
-                    command,
-                    '%s.walk' % path_o,
-                    description='Compiling %s' % path
-                    )
+                # Tell walk to schedule running of the compile command if necessary.
+                #
+                system_concurrent(
+                        walk_concurrent,
+                        command,
+                        '%s.walk' % path_o,
+                        description='Compiling to %s' % path_o,
+                        command_compare=gcc_command_compare,
+                        )
 
         # Wait for all compile commands to finish before doing the link.
         #
         walk_concurrent.join()
-
+        
+        walk.log( 'Finished compiling.')
+        
         link_command_extra_path = '%s-link-extra' % exe
+        link_command_files.sort()
+        link_command_files = '\n'.join( link_command_files)
         file_write( link_command_files, link_command_extra_path)
 
         link_command += ' @%s' % link_command_extra_path
+        
+        if g_openbsd:
+        
+            link_command += (
+                    ' -l z'
+                    ' -l ossaudio'
+                    )
+        
+        #link_command += ' -Wl,--verbose'
 
         # Tell walk to run our link command if necessary.
         #
         system( link_command, '%s.walk' % exe, description='Linking %s' % exe)
 
-        # Create a script to run our generated executable, assuming location of
-        # fgdata.
+        # Create a script to run our generated executable via gdb.
         #
-        run_fgfs_path = '%s-run.sh' % exe
-        file_write(
-                '#!/bin/sh\n'
-                'LD_LIBRARY_PATH=`pwd`/openscenegraph/install/lib %s "$@"\n' % exe
-                ,
-                run_fgfs_path,
-                )
-        os.system( 'chmod u+x %s' % run_fgfs_path)
-        
+        walk.log( 'Creating gdb wrapper script for fgfs.')
         run_fgfs_path = '%s-run-gdb.sh' % exe
-        file_write(
-                '#!/bin/sh\n'
-                'LD_LIBRARY_PATH=`pwd`/openscenegraph/install/lib gdb -ex "handle SIGPIPE noprint nostop" -ex "set print thread-events off" -ex "set print pretty on" -ex run --args  %s "$@"\n' % exe
+        file_write(''
+                + '#!/bin/sh\n'
+                    + ('egdb' if g_openbsd else 'gdb')
+                    + ' -ex "handle SIGPIPE noprint nostop"'
+                    + ' -ex "set print thread-events off"'
+                    + ' -ex "set print pretty on"'
+                    + ' -ex run'
+                    + f' --args  {exe} "$@"'
+                    + '\n'
                 ,
                 run_fgfs_path,
                 )
         os.system( 'chmod u+x %s' % run_fgfs_path)
         
+        walk.log_prefix_set( '[100%] ')
         walk.log( 'Build finished successfully.')
 
     finally:
@@ -1293,36 +1457,77 @@ def build():
         walk_concurrent.end()
 
 
+class Args:
+    '''
+    Iterates over argv items. Does getopt-style splitting of args starting with
+    single '-' character.
+    '''
+    def __init__( self, argv):
+        self.argv = argv
+        self.pos = 0
+        self.pos_sub = None
+    def next( self):
+        while 1:
+            if self.pos >= len(self.argv):
+                raise StopIteration()
+            arg = self.argv[self.pos]
+            if (not self.pos_sub
+                    and arg.startswith('-')
+                    and not arg.startswith('--')
+                    ):
+                # Start splitting current arg.
+                self.pos_sub = 1
+            if self.pos_sub and self.pos_sub >= len(arg):
+                # End of '-' sub-arg.
+                self.pos += 1
+                self.pos_sub = None
+                continue
+            if self.pos_sub:
+                # Return '-' sub-arg.
+                ret = arg[self.pos_sub]
+                self.pos_sub += 1
+                return f'-{ret}'
+            # Return normal arg.
+            self.pos += 1
+            return arg
+
 def main():
 
     global g_build_debug
     global g_build_optimise
+    global g_clang
     global g_compositor
     global g_concurrency
     global g_force
     global g_outdir
     global g_verbose
 
-    args = iter( sys.argv[1:])
+    args = Args( sys.argv[1:])
     
     while 1:
-        try: arg = next( args)
+        try: arg = args.next()
         except StopIteration: break
-        
+        #walk.log( 'arg=%s' % arg)
         if 0:
             pass
         
         elif arg == '-b' or arg == '--build':
             build()
         
+        elif arg == '--link-only':
+            build( link_only=True)
+        
+        elif arg == '--clang':
+            g_clang = int( args.next())
+        
         elif arg == '--compositor':
-            g_compositor = int( next( args))
+            g_compositor = int( args.next())
         
         elif arg == '--debug':
-            g_debug = int( next( args))
+            g_debug = int( args.next())
         
         elif arg == '--force':
-            force = next( args)
+            force = args.next()
             if force == 'default':
                 g_force = None
             else:
@@ -1332,16 +1537,17 @@ def main():
             print( __doc__)
         
         elif arg == '-j':
-            g_concurrency = int( next( args))
+            g_concurrency = abs(int( args.next()))
+            assert g_concurrency >= 0
         
         elif arg == '--old':
             walk.mtime_cache_mark_old( path)
         
         elif arg == '--optimise':
-            g_optimise = int( next( args))
+            g_optimise = int( args.next())
         
         elif arg == '--out-dir' or arg == '-o':
-            g_outdir = next( args)
+            g_outdir = args.next()
         
         elif arg == '--show':
             print( 'compositor:     %s' % g_compositor)
@@ -1353,7 +1559,7 @@ def main():
             print( 'verbose:        %s' % walk.get_verbose( g_verbose))
         
         elif arg == '--verbose' or arg == '-v':
-            v = next( args)
+            v = args.next()
             if v.startswith( '+') or v.startswith( '-'):
                 vv = walk.get_verbose( g_verbose)
                 for c in v[1:]:
@@ -1367,7 +1573,7 @@ def main():
                 g_verbose = v
         
         elif arg == '--new':
-            path = next( args)
+            path = args.next()
             walk.mtime_cache_mark_new( path)
         
         else:
