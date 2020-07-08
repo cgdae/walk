@@ -241,7 +241,7 @@ def get_verbose( v):
         return 'de'
     return v
 
-def file_write( text, path, verbose=None, force=None, mkdirs=True):
+def file_write( text, path, verbose=None, force=None):
     '''
     If file <path> exists and contents are already <text>, does nothing.
 
@@ -269,8 +269,7 @@ def file_write( text, path, verbose=None, force=None, mkdirs=True):
             log( message.strip())
         
         path_temp = '%s-walk-temp' % path
-        if mkdirs:
-            ensure_parent_dir( path)
+        ensure_parent_dir( path)
         with open( path_temp, 'w') as f:
             f.write( text)
         os.rename( path_temp, path)
@@ -285,7 +284,276 @@ def file_write( text, path, verbose=None, force=None, mkdirs=True):
             log( message.strip())
 
 
-def make_diagnostic( verbose, command, description, reason, force, notrun):
+class CommandFailed( Exception):
+    '''
+    Result of running a command.
+    '''
+    def __init__( self, wait_status, text=None):
+        self.wait_status = wait_status
+        self.text = text
+
+    
+def system(
+        command,
+        walk_path,
+        verbose=None,
+        force=None,
+        description=None,
+        command_compare=None,
+        method=None,
+        ):
+    '''
+    Runs command unless stored info from previous run implies that the command
+    would not change output files.
+    
+    Returns:
+        Integer termination status if we run command.
+        Otherwise None.
+    
+    command:
+        Command to run.
+    walk_path:
+        Name of generated walk file.
+    verbose:
+        0 - no diagnostics. Higher numbers add more information.
+    force:
+        0: never run command.
+        1: always run command.
+        None: run command unless walk file and mtimes indicate it will make no
+        changes.
+    description:
+        If verbose is zero, we write this text if we run <command>. E.g. could
+        be 'Compiling foo.c'.
+    method:
+        None, 'preload' or 'strace'. If None, we use default setting.
+    comand_compare:
+        If not None, should be callable taking two string commands, and return
+        non-zero if these commands differ significantly. E.g. for gcc commands
+        this could ignore any -W* args to avoid unnecessary recompilation
+        caused by changes to warning flags (unless -Werror is also used).
+    '''
+    verbose = get_verbose( verbose)
+    
+    if method is None:
+        # preload doesn't work on linux yet - seems like we don't intercept
+        # whatever function it is that gcc uses to open output the ouput
+        # executable.
+        #
+        if _osname == 'Linux':
+            method = 'trace'
+        elif _osname == 'OpenBSD':
+            method = 'preload'
+        else:
+            assert 0
+    
+    doit, reason = _analyse_walk_file( walk_path, command, command_compare)
+    
+    doit2 = doit
+    if force is not None:
+        doit2 = force
+    
+    if doit2:
+        # We always write a zero-length .walk file before running the command,
+        # which can be used to detect when a command did not complete (e.g.
+        # because we were killed.
+        #
+        # This allows our diagnostics to differentiate between running a
+        # command because it has never been run before (no .walk file) and
+        # runnng a command because previous invocation did not complete
+        # (zero-length .walk file).
+        #
+        ensure_parent_dir( walk_path)
+        with open( walk_path, 'w') as f:
+            pass
+        
+        # Run command under strace; we analyse strace output to find what files
+        # have been read/written.
+        #
+        # We tell strace to output to autodeps_filename_temp1, then we
+        # write our analysis to autodeps_filename_temp2, and finally mv
+        # to autodeps_filename_temp. So hopefully we are resistent to
+        # crashes/SIGKILL etc.
+        #
+        strace_path = walk_path + '-1'
+        remove( strace_path)
+        
+        if method == 'preload':
+            command2 = '%s %s' % (_make_preload( strace_path), command)
+            #log( 'command2 is: %s' % command2)
+        elif method == 'trace':
+            if _osname == 'Linux':
+                command2 = ('strace'
+                        + ' -f'
+                        + ' -o ' + strace_path
+                        + ' -q'
+                        + ' -qq'
+                        + ' -e trace=%file'
+                        + ' ' + command
+                        )
+            elif _osname == 'OpenBSD':
+                command2 = 'ktrace -i -f %s -t cn %s' % (strace_path, command)
+            else:
+                assert 0
+        else:
+            assert 0
+        
+        message = _make_diagnostic( verbose, command, description, reason, force=not doit, notrun=False)
+        if message:
+            log( message)
+      
+        t_begin = time.time()
+        
+        e = _system( command2, throw=False)
+        
+        t_end = time.time()
+        
+        if e:
+            if 'e' in verbose and 'c' not in verbose:
+                # We didn't output the command above, so output it now.
+                log( 'Command failed: %s' % command)
+
+        else:
+            # Command has succeeded so create the .walk file so that future
+            # invocations know whether the command should be run again.
+            #
+            if method == 'preload':
+                walk = _process_preload( command, strace_path, t_begin, t_end)
+            elif method == 'trace':
+                walk = _process_strace( command, strace_path, t_begin, t_end)
+            else:
+                assert 0
+            walk.write( walk_path)
+        
+        remove( strace_path)
+        
+    else:
+        message = _make_diagnostic( verbose, command, description, reason, force=doit, notrun=True)
+        if message:
+            log( message)
+        
+        e = None
+    
+    return e
+
+
+class Concurrent:
+    '''
+    Simple support for running commands concurrently.
+    
+    Usage:
+    
+        Instead of calling walk.system(), create a walk.Concurrent instance and
+        use its .system() method.
+
+        To wait until all scheduled tasks have completed, call .join().
+
+        Then to close down the internal threads, call .end().
+    '''
+    def __init__( self, num_threads, keep_going=False):
+        '''
+        num_threads:
+            Number of threads to run. (If zero, out .system() methods simply
+            calls walk.system() directly.)
+        keep_going:
+            If false (the default) we raise exception from .system() and
+            .join() if a previous command has failed. Otherwise new commands
+            will be scheduled regardless.
+            
+        Errors from scheduled commands can be retreived using .get_errors().
+        '''
+        self.num_threads = num_threads
+        self.keep_going = keep_going
+        self.queue = queue.Queue( maxsize=1)
+        self.errors = queue.Queue()
+        self.threads = []
+        for i in range( self.num_threads):
+            thread = threading.Thread( target=self._thread_fn, daemon=True)
+            self.threads.append( thread)
+            thread.start()
+        
+    def _thread_fn( self):
+        while 1:
+            item = self.queue.get()
+            if item is None:
+                self.queue.task_done()
+                break
+            e = system( *item)
+            if e:
+                command, walk_path, verbose, force, description, command_compare = item
+                self.errors.put( (command, walk_path, e))
+            self.queue.task_done()
+        
+    def _raise_if_errors( self):
+        if self.keep_going:
+            return
+        if not self.errors.empty():
+            raise Exception( 'task(s) failed')
+    
+    def system( self, command, walk_path, verbose=None, force=None,
+            description=None, command_compare=None):
+        '''
+        Schedule a command to be run. This will call walk.system() on one of
+        our internal threads.
+        
+        Will raise an exception if an earlier command failed (unless we were
+        constructed with keep_going=true).
+        
+        Will block until a thread is free to handle the new command.
+        '''
+        self._raise_if_errors()
+        if self.num_threads:
+            self.queue.put( (command, walk_path, verbose, force, description, command_compare))
+        else:
+            e = system( command, walk_path, verbose, force, description, command_compare)
+            if e:
+                self.errors.put( (command, walk_path, e))
+    
+    def join( self):
+        '''
+        Waits until all current tasks have finished.
+        
+        Will raise an exception if an earlier command failed (unless we were
+        constructed with keep_going=true).
+        '''
+        self.queue.join()
+        self._raise_if_errors()
+    
+    def get_errors( self):
+        '''
+        Returns list of errors from completed tasks.
+
+        These errors will not be returned again by later calls to
+        .get_errors().
+
+        Each returned error is (command, walk_path, e).
+        '''
+        ret = []
+        while 1:
+            if self.errors.empty():
+                break
+            e = self.errors.get()
+            ret.append( e)
+        return ret
+    
+    def end( self):
+        '''
+        Tells all threads to terminate and returns when they have terminated.
+        '''
+        for i in range( self.num_threads):
+            self.queue.put( None)
+        self.queue.join()
+        for t in self.threads:
+            t.join()
+
+
+
+#
+# Everything below here is internal implementation details, and not for
+# external use.
+#
+
+
+def _make_diagnostic( verbose, command, description, reason, force, notrun):
     '''
     Returns diagnostic text, such as:
     
@@ -347,260 +615,6 @@ def make_diagnostic( verbose, command, description, reason, force, notrun):
     return message
 
 
-class CommandFailed( Exception):
-    '''
-    Result of running a command.
-    '''
-    def __init__( self, wait_status, text=None):
-        self.wait_status = wait_status
-        self.text = text
-
-    
-def system(
-        command,
-        walk_path,
-        verbose=None,
-        force=None,
-        description=None,
-        mkdirs=True,
-        method=None,
-        ):
-    '''
-    Runs command unless stored info from previous run implies that the command
-    would not change output files.
-    
-    Returns:
-        Integer termination status if we run command.
-        Otherwise None.
-    
-    command:
-        Command to run.
-    walk_path:
-        Name of generated walk file.
-    verbose:
-        0 - no diagnostics. Higher numbers add more information.
-    force:
-        0: never run command.
-        1: always run command.
-        None: run command unless walk file and mtimes indicate it will make no
-        changes.
-    description:
-        If verbose is zero, we write this text if we run <command>. E.g. could
-        be 'Compiling foo.c'.
-    mkdirs:
-        If true we ensure parent directory of <walk_path> exists.
-    method:
-        None, 'preload' or 'strace'. If None, we use default setting.
-    '''
-    verbose = get_verbose( verbose)
-    
-    if method is None:
-        # preload doesn't work on linux yet - seems like we don't intercept
-        # whatever function it is that gcc uses to open output the ouput
-        # executable.
-        #
-        if _osname == 'Linux':
-            method = 'trace'
-        elif _osname == 'OpenBSD':
-            method = 'preload'
-        else:
-            assert 0
-    
-    doit, reason = _analyse_walk_file( walk_path, command)
-    
-    doit2 = doit
-    if force is not None:
-        doit2 = force
-    
-    if doit2:
-        # Always remove walk file before doing anything else - this ensures
-        # that the command will be re-run next time if we are killed.
-        #
-        remove( walk_path)
-        
-        # Run command under strace; we analyse strace output to find what files
-        # have been read/written.
-        #
-        # We tell strace to output to autodeps_filename_temp1, then we
-        # write our analysis to autodeps_filename_temp2, and finally mv
-        # to autodeps_filename_temp. So hopefully we are resistent to
-        # crashes/SIGKILL etc.
-        #
-        if mkdirs:
-            ensure_parent_dir( walk_path)
-        strace_path = walk_path + '-1'
-        remove( strace_path)
-        
-        if method == 'preload':
-            command2 = '%s %s' % (_make_preload( strace_path), command)
-            #log( 'command2 is: %s' % command2)
-        elif method == 'trace':
-            if _osname == 'Linux':
-                command2 = ('strace'
-                        + ' -f'
-                        + ' -o ' + strace_path
-                        + ' -q'
-                        + ' -qq'
-                        + ' -e trace=%file'
-                        + ' ' + command
-                        )
-            elif _osname == 'OpenBSD':
-                command2 = 'ktrace -i -f %s -t cn %s' % (strace_path, command)
-            else:
-                assert 0
-        else:
-            assert 0
-        
-        message = make_diagnostic( verbose, command, description, reason, force=not doit, notrun=False)
-        if message:
-            log( message)
-      
-        t_begin = time.time()
-        
-        e = _system( command2, throw=False)
-        
-        t_end = time.time()
-        
-        if e:
-            if 'e' in verbose and 'c' not in verbose:
-                # We didn't output the command above, so output it now.
-                log( 'Command failed: %s' % command)
-
-        else:
-            # Command has succeeded so create the .walk file so that future
-            # invocations know whether the command should be run again.
-            #
-            if method == 'preload':
-                _process_preload( command, strace_path, t_begin, t_end, walk_path)
-            elif method == 'trace':
-                _process_strace( command, strace_path, t_begin, t_end, walk_path)
-            else:
-                assert 0
-    else:
-        message = make_diagnostic( verbose, command, description, reason, force=doit, notrun=True)
-        if message:
-            log( message)
-        
-        e = None
-    
-    return e
-
-
-class Concurrent:
-    '''
-    Simple support for running commands concurrently.
-    
-    Usage:
-    
-        Instead of calling walk.system(), create a walk.Concurrent instance and
-        use its .system() method.
-
-        To wait until all scheduled tasks have completed, call .join().
-
-        Then to close down the internal threads, call .end().
-    '''
-    def __init__( self, num_threads, keep_going=False):
-        '''
-        num_threads:
-            Number of threads to run. (If zero, out .system() methods simply
-            calls walk.system() directly.)
-        keep_going:
-            If false (the default) we raise exception from .system() and
-            .join() if a previous command has failed. Otherwise new commands
-            will be scheduled regardless.
-            
-        Errors from scheduled commands can be retreived using .get_errors().
-        '''
-        self.num_threads = num_threads
-        self.keep_going = keep_going
-        self.queue = queue.Queue( maxsize=1)
-        self.errors = queue.Queue()
-        self.threads = []
-        for i in range( self.num_threads):
-            thread = threading.Thread( target=self._thread_fn, daemon=True)
-            self.threads.append( thread)
-            thread.start()
-        
-    def _thread_fn( self):
-        while 1:
-            item = self.queue.get()
-            if item is None:
-                self.queue.task_done()
-                break
-            e = system( *item)
-            if e:
-                command, walk_path, verbose, force, description, mkdirs = item
-                self.errors.put( (command, walk_path, e))
-            self.queue.task_done()
-        
-    def _raise_if_errors( self):
-        if self.keep_going:
-            return
-        if not self.errors.empty():
-            raise Exception( 'task(s) failed')
-    
-    def system( self, command, walk_path, verbose=None, force=None, mkdirs=True,
-            description=None):
-        '''
-        Schedule a command to be run. This will call walk.system() on one of
-        our internal threads.
-        
-        Will raise an exception if an earlier command failed (unless we were
-        constructed with keep_going=true).
-        '''
-        self._raise_if_errors()
-        if self.num_threads:
-            self.queue.put( (command, walk_path, verbose, force, description, mkdirs))
-        else:
-            e = system( command, walk_path, verbose, force, description, mkdirs)
-            if e:
-                self.errors.put( (command, walk_path, e))
-    
-    def join( self):
-        '''
-        Waits until all current tasks have finished.
-        
-        Will raise an exception if an earlier command failed (unless we were
-        constructed with keep_going=true).
-        '''
-        self.queue.join()
-        self._raise_if_errors()
-    
-    def get_errors( self):
-        '''
-        Returns list of errors from completed tasks.
-
-        These errors will not be returned again by later calls to
-        .get_errors().
-
-        Each returned error is (command, walk_path, e).
-        '''
-        ret = []
-        while 1:
-            if self.errors.empty():
-                break
-            e = self.errors.get()
-            ret.append( e)
-        return ret
-    
-    def end( self):
-        '''
-        Tells all threads to terminate and returns when they have terminated.
-        '''
-        for i in range( self.num_threads):
-            self.queue.put( None)
-        self.queue.join()
-        for t in self.threads:
-            t.join()
-
-
-
-#
-# Everything below here is internal implementation details, and not for
-# external use.
-#
-
-
 def _system(
         command,
         out=None,
@@ -616,14 +630,17 @@ def _system(
     
     Args:
         command:
-            A string; the command to run.
+            A string, the command to run.
         out:
             Where stdout and stderr go. One of:
                 Callable taking single <text> param.
+                
                 Object with .write() method taking single <text> param.
+                
                 Integer >= 0, a file descriptor.
-                Other subprocess module special value, passed directly to
-                subprocess.Popen().
+                
+                Other subprocess module special value (should not be
+                subprocess.PIPE), passed directly to subprocess.Popen().
         capture:
             If true, we also capture the output text and include it in the
             returned information.
@@ -636,15 +653,25 @@ def _system(
         capture throw   Return
         ---------------------------
         false   false   wait_status
-        false   true    None
+        false   true    None or raise CommandFailed instance.
         true    false   (wait_status, out_text)
         true    true    out_text or raise CommandFailed instance.
     '''
     stdout = out
-    if callable( out) or getattr( out, 'write', None) or capture:
+    
+    outfn = lambda text: None
+    if callable( out):
         stdout = subprocess.PIPE
+        outfn = out
+    elif getattr( out, 'write', None):
+        stdout = subprocess.PIPE
+        outfn = lambda text: out.write(text)
+    elif isinstance( out, int) and out >= 0:
+        stdout = subprocess.PIPE
+        outfn = lambda text: os.write( out, text)
     
     if capture:
+        stdout = subprocess.PIPE
         capture_out = io.StringIO()
     
     child = subprocess.Popen(
@@ -660,18 +687,10 @@ def _system(
         child_out = child.stdout
     
     if stdout == subprocess.PIPE:
-        while 1:
-            for line in child_out:
-                if callable( out):
-                    out( line)
-                elif getattr( out, 'write', None):
-                    out.write( line)
-                elif isinstance( out, int) and out >= 0:
-                    os.write( out, text)
-                else:
-                    pass
-                if capture:
-                    capture_out.write( text)
+        for line in child_out:
+            outfn( line)
+            if capture:
+                capture_out.write( text)
     
     wait_status = child.wait()
     
@@ -686,7 +705,7 @@ def _system(
     return wait_status
     
 
-def _analyse_walk_file( walk_path, command):
+def _analyse_walk_file( walk_path, command, command_compare=None):
     '''
     Looks at information about previously opened files and decides whether we
     can avoid running the command again. This is run every time the user calls
@@ -697,6 +716,11 @@ def _analyse_walk_file( walk_path, command):
         command read/wrote when it was run before.
     command:
         The command that was run previously.
+    command_compare:
+        If not None, should be callable taking two string commands, and return
+        non-zero if these commands differ significantly. E.g. for gcc commands
+        this could ignore any -W* args to avoid unnecessary recompilation
+        caused by changes to warning flags.
     
     Returns (doit, reason):
         doit:
@@ -728,12 +752,11 @@ def _analyse_walk_file( walk_path, command):
         t_begin = None
         t_end = None
         
+        num_lines = 0
         for line in f:
             #log( 'looking at line: %r' % line)
             # Using regexes is slower, e.g. 1.6ms vs 2.2ms.
-            
-            if len(line) == 0:
-                pass
+            num_lines += 1
             
             # Exclude trailing \n.
             line = line[:-1]
@@ -742,7 +765,12 @@ def _analyse_walk_file( walk_path, command):
                 pass
             elif not command_old and line.startswith( 'command: '):
                 command_old = line[ len('command: '):]
-                if command != command_old:
+                
+                if command_compare:
+                    diff = command_compare(command, command_old)
+                else:
+                    diff = (command != command_old)
+                if diff:
                     #log( 'command has changed:')
                     #log( '    from %s' % command_old)
                     #log( '    to   %s' % command)
@@ -836,7 +864,10 @@ def _analyse_walk_file( walk_path, command):
         # same mtimes, just in case they are the same file.
         #
         doit = False
-        if newest_read is None:
+        if num_lines == 0:
+            doit = True
+            reason.append( 'previous invocation failed or was interrupted')
+        elif newest_read is None:
             doit = True
             reason.append( 'no input files found')
         elif oldest_write is None:
@@ -926,10 +957,10 @@ class WalkFile:
         os.rename( walk_path_, walk_path)
         
 
-def _process_strace( command, strace_path, t_begin, t_end, walk_path, mkdirs=0):
+def _process_strace( command, strace_path, t_begin, t_end):
     '''
     Analyses info in strace (or ktrace on OpenBSD) output file <strace_path>,
-    and creates walk file <walk_path>.
+    and returns a WalkFile.
 
     We use a temp file and rename, to ensure that we are safe against crashing
     or SIGKILL etc.
@@ -1074,9 +1105,7 @@ def _process_strace( command, strace_path, t_begin, t_end, walk_path, mkdirs=0):
     else:
         assert 0
     
-    remove( strace_path)
-    
-    walk.write( walk_path)
+    return walk
 
 
 # C code for preload library that intercepts open() etc in order to detect the
@@ -1578,7 +1607,7 @@ int open64( const char* path, int oflag)
 #endif
 '''
 
-def _process_preload( command, walk_path0, t_begin, t_end, walk_path):
+def _process_preload( command, walk_path0, t_begin, t_end):
     '''
     Takes file created by preload library, and processes it into a walk file.
 
@@ -1614,7 +1643,7 @@ def _process_preload( command, walk_path0, t_begin, t_end, walk_path):
                 p = line[ sp+4:]
                 walk.add_open( ret, p, r, w)
     
-    walk.write( walk_path)
+    return walk
 
 _make_preload_up_to_date = False
 
