@@ -125,6 +125,13 @@ Args:
     --out-dir <directory>
         Set the directory that will contain all generated files.
     
+    --osg <directory>
+        Use local OSG install instead of system OSG.
+        
+        For example:
+            (cd openscenegraph; mkdir build; cd build; cmake -DCMAKE_INSTALL_PREFIX=`pwd`/install -DCMAKE_BUILD_TYPE=Debug ..; time make -j 4; make install)
+            .../walkfg.py --osg openscenegraph/build/install -b
+    
     --show
         Show settings.
     
@@ -177,6 +184,7 @@ License:
 
 '''
 
+import glob
 import os
 import re
 import resource
@@ -196,6 +204,8 @@ g_force = None
 g_outdir = 'build-walk'
 g_verbose = None
 g_clang = False
+g_max_load_average = None
+g_osg_dir = None
 
 g_os = os.uname()[0]
 g_openbsd = g_os == 'OpenBSD'
@@ -218,6 +228,7 @@ def system( command, walk_path, description=None, verbose=None):
             verbose=verbose,
             force=g_force,
             description=description,
+            #out_prefix='    ',
             )
     if e:
         raise Exception( 'command failed: %s' % command)
@@ -236,6 +247,7 @@ def system_concurrent( walk_concurrent, command, walk_path, description=None, ve
             force=g_force,
             description=description,
             command_compare=command_compare,
+            #out_prefix='    ',
             )
 
 def file_write( text, path, verbose=None):
@@ -553,9 +565,13 @@ def build( link_only=False):
         # flightgear/src/Scripting/NasalCanvas.cxx.
         #
         soft, hard = resource.getrlimit( resource.RLIMIT_DATA)
-        soft_new = min(4*2**30, hard)
-        resource.setrlimit( resource.RLIMIT_DATA, (soft_new, hard))
-        walk.log( f'Have changed RLIMIT_DATA from {soft} to {soft_new}')
+        required = min(4*2**30, hard)
+        if soft < required:
+            if hard < required:
+                walk.log( f'Warning: RLIMIT_DATA hard={hard} is less than required={required}')
+            soft_new = min(hard, required)
+            resource.setrlimit( resource.RLIMIT_DATA, (soft_new, hard))
+            walk.log( f'Have changed RLIMIT_DATA from {soft} to {soft_new}')
 
     all_files, src_fgfs = get_files()
 
@@ -847,7 +863,7 @@ def build( link_only=False):
             else:
                 pass
                 #walk.log( f'c++ feature: not defining {define}')
-        walk.log( f'cpp_feature_defines: {cpp_feature_defines}')
+        #walk.log( f'cpp_feature_defines: {cpp_feature_defines}')
 
     # Define compile/link commands. For linking, we write the .o filenames to a
     # separate file and use gcc's @<filename> to avoid the command becoming too
@@ -867,6 +883,9 @@ def build( link_only=False):
 
     if g_compositor:
         exe += ',compositor'
+    
+    if g_osg_dir:
+        exe += ',osg'
 
     exe += '.exe'
 
@@ -878,9 +897,11 @@ def build( link_only=False):
             ' Qt5Widgets'
             ' dbus-1'
             ' gl'
-            ' openscenegraph'
             ' x11'
             )
+    if not g_osg_dir:
+        libs += ' openscenegraph'
+    
     if g_openbsd:
         libs += (
                 ' glu'
@@ -920,7 +941,27 @@ def build( link_only=False):
                 ' -pthread'
                 )
     
-    if g_linux:
+    if g_osg_dir:
+        #link_command += f' -L {g_osg_dir}/lib64'
+        for l in (
+                'osg',
+                'osgDB',
+                'osgFX',
+                'osgGA',
+                'osgParticle',
+                'osgSim',
+                'osgText',
+                'osgUtil',
+                'osgViewer',
+                ):
+            # use 'd' to select debug build of osg?
+            ll = f'{g_osg_dir}/lib64/lib{l}d.so.*.*.*'
+            lll = glob.glob( ll)
+            assert len(lll) == 1, f'll={ll!r} lll={lll!r}'
+            lll = lll[0]
+            link_command += f' {lll}'
+        
+    if g_linux and not g_osg_dir:
         link_command += (
                 ' -l osg'
                 ' -l osgDB'
@@ -933,25 +974,36 @@ def build( link_only=False):
                 ' -l osgViewer'
                 )
     
-    link_command += ' %s' % libs_linkflags
+    if g_openbsd:
+        link_command += (
+                ' -l z'
+                ' -l ossaudio'
+                ' -l execinfo'  # for backtrace*().
+                )
         
+    link_command += ' %s' % libs_linkflags
+    
     link_command_files = []
 
+    # Sort the source files by mtime so that we compile recently-modified ones
+    # first, which helps save time when investigating/fixing compile failures.
+    #
+    src_fgfs.sort( key=lambda path: -walk.mtime( path))
+    
     # Set things up so walk.py can run compile commands concurrently.
     #
-    walk_concurrent = walk.Concurrent( g_concurrency)
+    walk_concurrent = walk.Concurrent(
+            g_concurrency,
+            max_load_average=g_max_load_average,
+            )
+    
     try:
 
         # Compile each source file. While doing so, we also add to the final
         # link command.
         #
-        # We sort the source files so that we compile recently-modified ones
-        # first, which helps save time when investigating compile failures.
-        #
         
         progress_t = 0
-        src_fgfs.sort( key=lambda path: -walk.mtime( path))
-        
         for i, path in enumerate( src_fgfs):
         
             walk.log_prefix_set( '[% 3i%%] ' % (100 * i / len(src_fgfs)))
@@ -980,7 +1032,7 @@ def build( link_only=False):
                 if (0
                         or path.startswith( 'flightgear/src/Canvas/')
                         or path.startswith( 'flightgear/src/Scenery/')
-                        or path.startswith( 'flightgear/src/GUI/LauncherMainWindow.cxx')
+                        or path.startswith( 'flightgear/src/GUI/')
                         or path.startswith( 'flightgear/src/Main/')
                         or path.startswith( 'flightgear/src/Viewer/')
                         or path.startswith( 'flightgear/src/Time/')
@@ -990,6 +1042,10 @@ def build( link_only=False):
                         ):
                     path_o += ',compositor'
                     command += ' -D ENABLE_COMPOSITOR'
+            
+            if g_osg_dir:
+                path_o += ',osg'
+                command += f' -I {g_osg_dir}/include'
 
             # Add various args to the compile command depending on source path.
             #
@@ -1023,6 +1079,7 @@ def build( link_only=False):
                 command += (
                         ' -Wno-inconsistent-missing-override'
                         ' -Wno-overloaded-virtual'
+                        ' -Wno-macro-redefined'
                         )
             
             if (0
@@ -1416,13 +1473,6 @@ def build( link_only=False):
 
         link_command += ' @%s' % link_command_extra_path
         
-        if g_openbsd:
-        
-            link_command += (
-                    ' -l z'
-                    ' -l ossaudio'
-                    )
-        
         #link_command += ' -Wl,--verbose'
 
         # Tell walk to run our link command if necessary.
@@ -1501,7 +1551,9 @@ def main():
     global g_force
     global g_outdir
     global g_verbose
-
+    global g_max_load_average
+    global g_osg_dir
+    
     args = Args( sys.argv[1:])
     
     while 1:
@@ -1513,6 +1565,9 @@ def main():
         
         elif arg == '-b' or arg == '--build':
             build()
+        
+        elif arg == '-l':
+            g_max_load_average = float( args.next())
         
         elif arg == '--link-only':
             build( link_only=True)
@@ -1542,6 +1597,9 @@ def main():
         
         elif arg == '--old':
             walk.mtime_cache_mark_old( path)
+        
+        elif arg == '--osg':
+            g_osg_dir = args.next()
         
         elif arg == '--optimise':
             g_optimise = int( args.next())
