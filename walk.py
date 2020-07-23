@@ -19,10 +19,13 @@ Use as a build system:
     
     For example to build a project consisting of two .c files, one could do:
     
-        walk.system( 'gcc -c -o foo.o foo.c', 'foo.o.walk')
-        walk.system( 'gcc -c -o bar.o bar.c', 'bar.o.walk')
-        walk.system( 'gcc -o myapp foo.o bar.o', 'myapp.walk')
+        walk.system( 'cc -c -o foo.o foo.c', 'foo.o.walk')
+        walk.system( 'cc -c -o bar.o bar.c', 'bar.o.walk')
+        walk.system( 'cc -o myapp foo.o bar.o', 'myapp.walk')
     
+    Unlike conventional builds systems, we are is in control of the order in
+    which commands are run, so for example we could choose to compile newer
+    source files first, which often finds compilation errors more quickly.
 
 How it work:
 
@@ -40,9 +43,10 @@ How it work:
     We specially handle cases such as failed input files (e.g. failed to open
     for reading) where the file now exists - in this case we always run the
     command. We also ensure that we are resilient to being interrupted by
-    signals or system crashes, for example we delete the <walk_file> before
-    re-running a command so that if we are killed, there will be no walk_file,
-    which will ensure that the command is re-run next time.
+    signals or system crashes. For example we write a zero-length <walk_file>
+    before re-running a command so that if we are killed before the command
+    completes, then the next we are run we will know the command was
+    interrupted and can force a re-run.
 
 
 Concurrency:
@@ -59,8 +63,8 @@ Concurrency:
         
         # Schedule commands to be run concurrently.
         #
-        walk_concurrent.system( 'gcc -c -o foo.o foo.c', 'foo.o.walk')
-        walk_concurrent.system( 'gcc -c -o bar.o bar.c', 'bar.o.walk')
+        walk_concurrent.system( 'cc -c -o foo.o foo.c', 'foo.o.walk')
+        walk_concurrent.system( 'cc -c -o bar.o bar.c', 'bar.o.walk')
         ...
         
         # Wait for all scheduled commands to complete.
@@ -69,7 +73,7 @@ Concurrency:
         
         # Run more commands.
         #
-        walk.system( 'gcc -o myapp foo.o bar.o', 'myapp.walk')
+        walk.system( 'cc -o myapp foo.o bar.o', 'myapp.walk')
         walk_concurrent.end()
 
 
@@ -93,9 +97,7 @@ Command line usage:
 
     Examples:
 
-        walk.py -v gcc -Wall -W -o myapp.o foo.c bar.c
-
-        CC="walk.py -v gcc" make
+        walk.py cc myapp.exe.walk -Wall -W -o myapp.exe foo.c bar.c
 
 
 Limitatations:
@@ -137,7 +139,9 @@ License:
 
 '''
 
+import codecs
 import hashlib
+import io
 import os
 import queue
 import re
@@ -154,11 +158,25 @@ def log_prefix_set( prefix):
     global _log_prefix
     _log_prefix = prefix
 
+class LogPrefixScope:
+    def __init__(self, prefix):
+        self.prefix = prefix
+    def __enter__(self):
+        global _log_prefix
+        self.prefix_prev = _log_prefix
+        _log_prefix += self.prefix
+    def __exit__(self, type, value, tb):
+        global _log_prefix
+        _log_prefix = self.prefix_prev
+
 _log_last_t = 0
 def log( text):
     global _log_last_t
     out = sys.stdout
-    print( '%s%s' % (_log_prefix, text), file=out)
+    if text.endswith( '\n'):
+        text = text[:-1]
+    for line in text.split( '\n'):
+        out.write( f'{_log_prefix}{line}\n')
     out.flush()
     _log_last_t = time.time()
 
@@ -246,8 +264,10 @@ def file_write( text, path, verbose=None, force=None):
     If file <path> exists and contents are already <text>, does nothing.
 
     Otherwise writes <text> to file <path>.
-    
+
     Will raise an exception if something goes wrong.
+
+    <verbose> and <force> are as in walk.system().
     '''
     verbose = get_verbose( verbose)
     try:
@@ -301,6 +321,9 @@ def system(
         description=None,
         command_compare=None,
         method=None,
+        out=None,
+        out_prefix='',
+        out_buffer=False,
         ):
     '''
     Runs command unless stored info from previous run implies that the command
@@ -313,35 +336,79 @@ def system(
     command:
         Command to run.
     walk_path:
-        Name of generated walk file.
+        Name of generated walk file; this will contain information on what
+        files the command read and wrote.
     verbose:
-        0 - no diagnostics. Higher numbers add more information.
+        A string where the presence of particular characters controls what
+        diagnostics are generated:
+        
+            d   Show command description if we run the command.
+            c   Show the command itself if we run the command.
+            f   Show that we are forcing the command to be run.
+            r   Show the reason for running the command.
+            m   Show generic message if we are running the command.
+        
+        Upper-case versions of the above cause the equivalent messages to be
+        generated if we /don't/ run the command.
     force:
-        0: never run command.
-        1: always run command.
-        None: run command unless walk file and mtimes indicate it will make no
-        changes.
+        If None (the default), we run the command unless walk file and mtimes
+        indicate it will make no changes.
+        
+        Otherwise if true (e.g. 1 or True) we always run the command; if false
+        (e.g. 0 or False) we never run the command.
     description:
-        If verbose is zero, we write this text if we run <command>. E.g. could
-        be 'Compiling foo.c'.
+        Text used by <verbose>'s 'd' option. E.g. 'Compiling foo.c'.
     method:
-        None, 'preload' or 'strace'. If None, we use default setting.
-    comand_compare:
+        None, 'preload' or 'trace'.
+
+        If None, we use default setting for the OS.
+
+        If 'trace' we use Linux strace or OpenBSD ktrace to find what file
+        operations the command used.
+
+        If 'preload' we include our own code using LD_PRELOAD to find calls to
+        open() etc.
+    command_compare:
         If not None, should be callable taking two string commands, and return
-        non-zero if these commands differ significantly. E.g. for gcc commands
-        this could ignore any -W* args to avoid unnecessary recompilation
-        caused by changes to warning flags (unless -Werror is also used).
+        non-zero if these commands differ significantly.
+
+        E.g. for gcc-style compilation commands this could ignore any -W* args
+        to avoid unnecessary recompilation caused by changes to warning flags
+        (unless -Werror is also used).
+    out:
+        Where the command's stdout and stderr go:
+            None:
+                If both out_prefix and out_buffer are false, the command's
+                output goes directly to the inherited stdout/stderr. Otherwise
+                it is sent (via a pipe) to our stdout.
+
+            A callable taking a single <text> param.
+
+            An object with .write() method taking a single <text> param.
+
+            An integer >= 0, used with os.write().
+
+            A subprocess module special value (should not be subprocess.PIPE)
+            such as subprocess.DEVNULL: passed directly to subprocess.Popen().
+    out_prefix:
+        If not None, prepended to each line sent to <out>.
+    out_buffer:
+        If true, we buffer up output and send to <out> in one call after
+        command has terminated.
     '''
     verbose = get_verbose( verbose)
     
     if method is None:
-        # preload doesn't work on linux yet - seems like we don't intercept
-        # whatever function it is that gcc uses to open output the ouput
-        # executable.
-        #
         if _osname == 'Linux':
+            # 'preload' doesn't work yet - seems like we don't intercept
+            # whatever function it is that gcc uses to open the output
+            # executable when linking.
+            #
             method = 'trace'
         elif _osname == 'OpenBSD':
+            # Both 'trace' and 'preload' currently appear to work, but 'trace'
+            # hasn't been tested that much so the default is 'preload'.
+            #
             method = 'preload'
         else:
             assert 0
@@ -360,7 +427,7 @@ def system(
         # This allows our diagnostics to differentiate between running a
         # command because it has never been run before (no .walk file) and
         # runnng a command because previous invocation did not complete
-        # (zero-length .walk file).
+        # or failed (zero-length .walk file).
         #
         ensure_parent_dir( walk_path)
         with open( walk_path, 'w') as f:
@@ -403,7 +470,13 @@ def system(
       
         t_begin = time.time()
         
-        e = _system( command2, throw=False)
+        e = _system(
+                command2,
+                throw=False,
+                out=out,
+                out_prefix=out_prefix,
+                out_buffer=out_buffer,
+                )
         
         t_end = time.time()
         
@@ -449,7 +522,7 @@ class Concurrent:
 
         Then to close down the internal threads, call .end().
     '''
-    def __init__( self, num_threads, keep_going=False):
+    def __init__( self, num_threads, keep_going=False, max_load_average=None):
         '''
         num_threads:
             Number of threads to run. (If zero, out .system() methods simply
@@ -463,6 +536,7 @@ class Concurrent:
         '''
         self.num_threads = num_threads
         self.keep_going = keep_going
+        self.max_load_average = max_load_average
         self.queue = queue.Queue( maxsize=1)
         self.errors = queue.Queue()
         self.threads = []
@@ -479,7 +553,17 @@ class Concurrent:
                 break
             e = system( *item)
             if e:
-                command, walk_path, verbose, force, description, command_compare = item
+                (
+                        command,
+                        walk_path,
+                        verbose,
+                        force,
+                        description,
+                        command_compare,
+                        out,
+                        out_prefix,
+                        out_buffer,
+                        ) = item
                 self.errors.put( (command, walk_path, e))
             self.queue.task_done()
         
@@ -489,8 +573,17 @@ class Concurrent:
         if not self.errors.empty():
             raise Exception( 'task(s) failed')
     
-    def system( self, command, walk_path, verbose=None, force=None,
-            description=None, command_compare=None):
+    def system( self,
+            command,
+            walk_path,
+            verbose=None,
+            force=None,
+            description=None,
+            command_compare=None,
+            out=None,
+            out_prefix=None,
+            out_buffer=None,
+            ):
         '''
         Schedule a command to be run. This will call walk.system() on one of
         our internal threads.
@@ -498,13 +591,47 @@ class Concurrent:
         Will raise an exception if an earlier command failed (unless we were
         constructed with keep_going=true).
         
-        Will block until a thread is free to handle the new command.
+        Will block until a thread is free to handle the new command, or for
+        load average to reduce below self.max_load_average.
         '''
         self._raise_if_errors()
+        
+        if self.max_load_average is not None:
+            it = 0
+            while 1:
+                current_load_average = os.getloadavg()[0]
+                if current_load_average < self.max_load_average:
+                    break
+                if it % 5 == 0:
+                    log( f'[Waiting for load_average={current_load_average:.1f} to reduce below {self.max_load_average:.1f}...]')
+                time.sleep(1)
+                it += 1
+        
         if self.num_threads:
-            self.queue.put( (command, walk_path, verbose, force, description, command_compare))
+            self.queue.put(
+                    (
+                    command,
+                    walk_path,
+                    verbose,
+                    force,
+                    description,
+                    command_compare,
+                    out,
+                    out_prefix,
+                    out_buffer,
+                    ))
         else:
-            e = system( command, walk_path, verbose, force, description, command_compare)
+            e = system(
+                    command,
+                    walk_path,
+                    verbose,
+                    force,
+                    description,
+                    command_compare,
+                    out=out,
+                    out_prefix=out_prefix,
+                    out_buffer=out_buffer,
+                    )
             if e:
                 self.errors.put( (command, walk_path, e))
     
@@ -560,7 +687,8 @@ def _make_diagnostic( verbose, command, description, reason, force, notrun):
         Running command because foo.h is new: gcc -o foo.c.o foo.c
     
     verbose:
-        String describing what elements should be included in diagnostics.
+        String describing what elements should be included in diagnostics. See
+        walk.system()'s documentation for details.
     command:
         The command itself.
     description:
@@ -589,29 +717,33 @@ def _make_diagnostic( verbose, command, description, reason, force, notrun):
         message_tail += command
 
     message_head = ''
-    if message_tail:
-        if 'f' in verbose and force:
-            # Show that we are forcing run/not run of command.
-            message_head += ' forcing% running of command' % notrun_text
-        if 'r' in verbose:
-            # Show reason for running the command.
-            if not message_head:
-                if notrun:
-                    message_head += '%srunning command' % notrun_text
-                else:
-                    message_head += 'running command'
-            if reason:
-                message_head += ' because %s' % reason
-        if 'm' in verbose and not message_head:
-            # Show generic message.
-            message_head += '%s running command' % notrun_text_initial
-        message_head = message_head.strip()
-        if message_head:
-            message_head = message_head[0].upper() + message_head[1:]
+    if 'f' in verbose and force:
+        # Show that we are forcing run/not run of command.
+        message_head += ' forcing%s running of command' % notrun_text
+    if 'r' in verbose:
+        # Show reason for running the command.
+        if not message_head:
+            if notrun:
+                message_head += '%s running command' % notrun_text
+            else:
+                message_head += 'running command'
+        if reason:
+            message_head += ' because %s' % reason
+    if 'm' in verbose and not message_head:
+        # Show generic message.
+        message_head += '%s running command' % notrun_text_initial
+    message_head = message_head.strip()
+    if message_head:
+        message_head = message_head[0].upper() + message_head[1:]
 
     message = message_head
     if message_tail:
+        if message:
+            message += ':'
         message += ' ' + message_tail
+    
+    if 0:
+        log( f'verbose={verbose} command={command!r} description={description!r} reason={reason!r}, force={force} notrun={notrun}: returning: {message!r}')
     return message
 
 
@@ -622,6 +754,8 @@ def _system(
         throw=True,
         encoding='latin_1',
         encoding_errors='strict',
+        out_prefix='',
+        out_buffer=False,
         ):
     '''
     Runs a command, with support for capturing the output etc.
@@ -632,21 +766,31 @@ def _system(
         command:
             A string, the command to run.
         out:
-            Where stdout and stderr go. One of:
-                Callable taking single <text> param.
+            Where the command's stdout and stderr go:
+                None:
+                    If both out_prefix and out_buffer are false, the command's
+                    output goes to the inherited stdout/stderr. Otherwise it is
+                    sent to our stdout.
+                
+                A callable taking single <text> param.
                 
                 Object with .write() method taking single <text> param.
                 
                 Integer >= 0, a file descriptor.
                 
                 Other subprocess module special value (should not be
-                subprocess.PIPE), passed directly to subprocess.Popen().
+                subprocess.PIPE): passed directly to subprocess.Popen().
         capture:
             If true, we also capture the output text and include it in the
             returned information.
         throw:
             If true, we raise a CommandFailed exception if command failed.
-    
+        out_prefix:
+            If not None, prepended to each line sent to <out>. Not included
+            in output returned if <capture> is true.
+        out_buffer:
+            If true, we buffer up output and send to <out> in one call after
+            command has terminated.
     Returns:
         Returned value depends on <out_capture> and <throw>:
         
@@ -659,7 +803,7 @@ def _system(
     '''
     stdout = out
     
-    outfn = lambda text: None
+    outfn = None
     if callable( out):
         stdout = subprocess.PIPE
         outfn = out
@@ -670,10 +814,17 @@ def _system(
         stdout = subprocess.PIPE
         outfn = lambda text: os.write( out, text)
     
-    if capture:
+    if capture or out_buffer or out_prefix:
         stdout = subprocess.PIPE
-        capture_out = io.StringIO()
     
+    buffer_ = None
+    if capture or out_buffer:
+        buffer_ = io.StringIO()
+    
+    if stdout == subprocess.PIPE and not out:
+        outfn = sys.stdout.write
+    
+    #log( f'stdout={stdout} command={command}')
     child = subprocess.Popen(
             command,
             shell=True,
@@ -688,15 +839,24 @@ def _system(
     
     if stdout == subprocess.PIPE:
         for line in child_out:
-            outfn( line)
-            if capture:
-                capture_out.write( text)
+            #log( f'out_prefix={out_prefix!r}. have read line={line!r}')
+            if not out_buffer:
+                outfn( out_prefix + line)
+            if buffer_:
+                buffer_.write( line)
     
     wait_status = child.wait()
     
     text = None
-    if capture:
-        text = capture_out.getvalue()
+    if buffer_:
+        text = buffer_.getvalue()
+    if out_buffer:
+        t = text
+        if out_prefix:
+            lines = t.split('\n')
+            t = [out_prefix + line for line in lines]
+            t = '\n'.join(t)
+        outfn( t)
     
     if wait_status and throw:
         raise SystemFailed( wait_status, text)
@@ -897,13 +1057,16 @@ class WalkFile:
     '''
     Creates a walk file, used by code that parses strace or preload output.
     '''
-    def __init__( self, command, t_begin, t_end):
+    def __init__( self, command, t_begin, t_end, verbose=False):
         self.command = command
         self.t_begin = t_begin
         self.t_end = t_end
         self.path2info = dict()
+        self.verbose = verbose
     
     def add_open( self, ret, path, r, w):
+        if self.verbose:
+            print('open: ret=%s r=%s w=%s path=%s' % (ret, r, w, path))
         path = os.path.abspath( path)
         mtime_cache_clear( path)
         # Look for earlier mention of <path>.
@@ -917,14 +1080,20 @@ class WalkFile:
             elif prev_ret >= 0 and ret >= 0:
                 self.path2info[ path] = ret, prev_r or r, prev_w or w
         else:
-            self.path2info[ path] = ret, r, w
+            # We ignore opens of directories, because mtimes are not useful.
+            if not os.path.isdir( path):
+                self.path2info[ path] = ret, r, w
     
     def add_delete( self, path):
+        if self.verbose:
+            print('delete: path=%s' % path)
         path = os.path.abspath( path)
         mtime_cache_clear( path)
         self.path2info.pop( path, None)
     
     def add_rename( self, path_from, path_to):
+        if self.verbose:
+            print('rename: path_from=%s path_to=%s' % (path_from, path_to))
         path_from = os.path.abspath( path_from)
         path_to = os.path.abspath( path_to)
         mtime_cache_clear( path_from)
@@ -1000,7 +1169,6 @@ def _process_strace( command, strace_path, t_begin, t_end):
                     #
                     
                     # maybe do this only if <write> is true?
-                    mtime_cache_clear( path)
                     if 0:
                         log( 'syscall=%s ret=%s. write=%s: %s' % (syscall, ret, write, path))
                     walk.add_open( ret, path, read, write)
@@ -1016,10 +1184,10 @@ def _process_strace( command, strace_path, t_begin, t_end):
                         walk.add_rename( from_, to_)
                 
     elif _osname == 'OpenBSD':
-        # This doesn't really work. The output from kdump seems to have
+        # Not sure how reliable this is. The output from kdump seems to have
         # two lines per syscall, with NAMI lines in-between, but sometimes
-        # other syscall lines can appear inbetween too, which makes things
-        # non-trivial to parse.
+        # other syscall lines can appear inbetween too, which could maybe cause
+        # our simple parser some problems?
         #
         # [Luckily the preload library approach seems to work on OpenBSD.]
         #
@@ -1033,75 +1201,57 @@ def _process_strace( command, strace_path, t_begin, t_end):
                 line = f.readline()
                 if not line:
                     break
-                m = re.match( '^ *[0-9]+ +[^ ]+ +CALL +(open|rename)[(]0x[0-9a-z]+,0x([0-9a-z]+)', line)
+                def next_path():
+                    while 1:
+                        line = f.readline()
+                        if not line:
+                            raise Exception('expecting path, but eof')
+                        m = re.match( '^ *[0-9]+ +[^ ]+ +NAMI +"([^"]*)"', line)
+                        if m:
+                            return m.group( 1)
+                def next_ret( syscall):
+                    while 1:
+                        line = f.readline()
+                        if not line:
+                            raise Exception('expecting path, but eof')
+                        m = re.match( '^ *[0-9]+ +[^ ]+ +RET +%s ([x0-9-]+)' % syscall, line)
+                        if m:
+                            ret = m.group( 1)
+                            if ret.startswith( '0x'):
+                                return int( ret[2:], 16)
+                            else:
+                                return int( ret)
+                m = None
                 if not m:
-                    continue
-                log( 'm=%s line: %r' % (m, line))
-                syscall = m.group(1)
-                flags = int( m.group(2), 16)
+                    m = re.match( '^ *[0-9]+ +[^ ]+ +CALL +open[(]0x[0-9a-z]+,0x([0-9a-z]+)', line)
+                    if m:
+                        path = next_path()
+                        ret = next_ret( 'open')
+                        flags = int( m.group(1), 16)
+                        flags &= 3
+                        if flags == 0:
+                            read, write = True, False
+                        elif flags == 1:
+                            read, write = False, True
+                        elif flags == 2:
+                            read, write = True, True
+                        else:
+                            read, write = False, False
+                        walk.add_open(ret, path, read, write)
+                        
+                if not m:
+                    m = re.match( '^ *[0-9]+ +[^ ]+ +CALL +rename[(]0x[0-9a-z]+,0x([0-9a-z]+)[)]', line)
+                    if m:
+                        path_from = next_path()
+                        path_to = next_path()
+                        walk.add_rename( path_from, path_to)
                 
-                line = f.readline()
-                if not line:
-                    break
-                log( 'line is: %r' % line)
-                mm = re.match( '^ *[0-9]+ +[^ ]+ +NAMI +"([^"]*)"', line)
-                if not mm:
-                    continue
-                #log( 'mm=%s' % mm)
-                path = mm.group( 1)
-                
-                if syscall == 'rename':
-                    line = f.readline()
-                    if not line:
-                        break
-                    log( 'rename2: line is: %r' % line)
-                    mm = re.match( '^ *[0-9]+ +[^ ]+ +NAMI +"([^"]*)"', line)
-                    if not mm:
-                        continue
-                    #log( 'mm=%s' % mm)
-                    path2 = mm.group( 1)
-                    
-                    for write_items_i, (p, i) in enumerate( write_items):
-                        log( 'i=%s p=%r' % (i, p))
-                        if p == path:
-                            log( '*** deleting write item: %s' % items[i])
-                            del items[ i]
-                            del write_items[write_items_i]
-                            break
-                    else:
-                        log( '*** cannot find path=%r in write_items' % path)
-                    path = path2
-                    flags = 1   # wronly
-                    log( '*** after rename, path=%r' % path)
-                
-                while 1:
-                    line = f.readline()
-                    if not line:
-                        break
-                    log( 'line is: %r' % line)
-                    mmm = re.match( '^ *[0-9]+ +[^ ]+ +RET +%s ([0-9-]+)' % syscall, line)
-                    if not mmm:
-                        continue
-                    else:
-                        break
-                #log( 'mmm=%s' % mmm)
-                ret = int( mmm.group(1))
-                #log( 'flags=0x%x' % flags)
-                flags &= 3
-                if flags == 0:
-                    read, write = True, False
-                elif flags == 1:
-                    read, write = False, True
-                elif flags == 2:
-                    read, write = True, True
-                else:
-                    read, write = False, False
-                if write:
-                    mtime_cache_clear( path)
-                if write:
-                    write_items.append( (path, len(items)))
-                items.append( '%r %s%s %s\n' % (ret, 'r' if read else '-', 'w' if write else '-', path))
-                #log( 'have appended: %r' % items[-1])
+                if not m:
+                    m = re.match( '^ *[0-9]+ +[^ ]+ +CALL +unlink[(]0x[0-9a-z]+[)]', line)
+                    if m:
+                        path = next_path()
+                        walk.add_delete( path)
+        os.remove( strace_path2)
     else:
         assert 0
     
@@ -1675,108 +1825,134 @@ def _make_preload( walk_file):
     return 'LD_PRELOAD=%s WALK_preload_out=%s' % (path_lib, walk_file)
 
 
-def _do_tests():
-    c = 'walk_test_foo.c'
-    h = 'walk_test_foo.h'
-    ex = './walk_test_foo.exe'
-    walkfile = '%s.walk' % ex
+def _do_tests(method=None):
+    '''
+    Runs some very simple tests.
     
-    try:
-        file_write( '''
-                #include "walk_test_foo.h"
-                int main(){ return 0;}
-                '''
-                ,
-                c
-                )
-        file_write( '''
-                '''
-                ,
-                h
-                )
+    method:
+        Passed directly to walk.system(), so controls whether we use preload or
+        trace.
+    '''
+    with LogPrefixScope( f'test method={method}: '):
+        log( 'Running tests...')
 
-        build = 'gcc -o %s %s' % (ex, c)
-        
-        remove( ex)
-        remove( walkfile)
+        build_c = 'walk_test_foo.c'
+        build_h = 'walk_test_foo.h'
+        build_exe = './walk_test_foo.exe'
+        build_walkfile = f'{build_exe}.walk'
 
-        # Build executable.
-        log( 'doing initial build')
-        e = system( build, walkfile, verbose=None)
-        assert not e
-        assert os.path.isfile( ex)
-        assert not os.system( ex)
-        assert os.path.isfile( walkfile)
-
-        # Check rebuild does nothing.
-        log( 'testing rebuild with no changes')
-        t = mtime( ex)
-        time.sleep(1)
-        mtime_cache_clear()
-        e = system( build, walkfile, verbose=None)
-        assert not e
-        t2 = mtime( ex)
-        assert t2 == t, '%s => %s' % (date_time(t), date_time(t2))
-
-        # Check rebuild with updated header updates executable.
-        log( 'testing rebuild with modified header')
-        mtime_cache_clear()
-        os.system( 'touch %s' % h)
-        e = system( build, walkfile, verbose=None)
-        t2 = mtime( ex)
-        assert not e
-        assert t2 > t
-        
-        # Check we correctly handle a command that reads from a, writes to b
-        # and renames b to c. In this case, the command behaves as though it
-        # reads from a and writes to b. It's a common idiom in tools so that
-        # the creation of an output file is atomic.
-        #
-        log( '')
-        log( 'testing rename')
         w = 'walk_test_rename.walk'
         a = 'walk_test_rename_a'
         b = 'walk_test_rename_b'
         c = 'walk_test_rename_c'
-        remove( w)
-        remove( a)
-        remove ( b)
-        mtime_cache_clear()
-        os.system( 'touch %s' % a)
-        command = '%s --test-abc %s %s %s' % (sys.argv[0], a, b, c)
-        log( 'command is: %s' % command)
         
-        log( '')
-        log( '1 running command')
-        mtime_cache_clear()
-        e = os.system( 'touch %s' % a)
-        e = system( command, w, verbose='derR')
-        #os.system( 'ls -lt|head')
-        assert e == 0, 'e=%s' % e
-        
-        log( '')
-        log( '2 running command')
-        mtime_cache_clear()
-        e = system( command, w, verbose='derR')
-        #os.system( 'ls -lt|head')
-        assert e is None, 'e=%s' % e
-        
-        log( '')
-        log( '3 running command')
-        mtime_cache_clear()
-        e = os.system( 'touch %s' % a)
-        e = system( command, w, verbose='derR')
-        #os.system( 'ls -lt|head')
-        assert e == 0, 'e=%s' % e
-        
-        log( 'tests passed')
-    
-    finally:
-        if 0:
-            remove( c)
-            remove( h)
-            remove( ex)
-            remove( walkfile)
+        try:
+            # Testing with compilation.
+            #
+            with LogPrefixScope( 'compilation: '):
+            
+                file_write( '''
+                        #include "walk_test_foo.h"
+                        int main(){ int x; return 0;}
+                        '''
+                        ,
+                        build_c
+                        )
+                file_write( '''
+                        '''
+                        ,
+                        build_h
+                        )
+
+                command = f'cc -W -Wall -o {build_exe} {build_c}'
+
+                remove( build_exe)
+                remove( build_walkfile)
+
+                # Build executable.
+                log( '== doing initial build')
+                e = system( command, build_walkfile, verbose='cderR', out=log, out_prefix='    ', method=method)
+                assert not e
+                assert os.path.isfile( build_exe)
+                assert not os.system( build_exe)
+                assert os.path.isfile( build_walkfile)
+
+                # Check rebuild does nothing.
+                log( '== testing rebuild with no changes')
+                t = mtime( build_exe)
+                time.sleep(1)
+                mtime_cache_clear()
+                e = system( command, build_walkfile, verbose='cderR', out=log, out_prefix='    ', method=method)
+                assert e is None
+                t2 = mtime( build_exe)
+                assert t2 == t, f'{date_time(t)} => {date_time(t2)}'
+
+                # Check rebuild with updated header updates executable.
+                log( '== testing rebuild with modified header')
+                mtime_cache_clear()
+                os.system( f'touch {build_h}')
+                e = system( command, build_walkfile, verbose='cderR', out=log, out_prefix='    ', method=method)
+                t2 = mtime( build_exe)
+                assert e == 0
+                assert t2 > t
+
+            with LogPrefixScope( 'rename: '):
+            
+                # Check we correctly handle a command that reads from a, writes to b
+                # and renames b to c. In this case, the command behaves as though it
+                # reads from a and writes to b. It's a common idiom in tools so that
+                # the creation of an output file is atomic.
+                #
+                log( '=== testing rename')
+                w = 'walk_test_rename.walk'
+                a = 'walk_test_rename_a'
+                b = 'walk_test_rename_b'
+                c = 'walk_test_rename_c'
+                remove( w)
+                remove( a)
+                remove( b)
+                mtime_cache_clear()
+                os.system( f'touch {a}')
+                # This command is implemented by this python script itself. It reads
+                # from a, writes to b, then renames b to c.
+                #
+                command = f'{sys.argv[0]} --test-abc {a} {b} {c}'
+                log( f'command is: {command}')
+
+                log( '')
+                log( '== running command for first time')
+                mtime_cache_clear()
+                e = os.system( f'touch {a}')
+                e = system( command, w, verbose='derR', out_prefix='    ', method=method)
+                #os.system( 'ls -lt|head')
+                assert e == 0, f'e={e}'
+
+                log( '')
+                log( '== running command again')
+                mtime_cache_clear()
+                e = system( command, w, verbose='derR', out_prefix='    ', method=method)
+                #os.system( 'ls -lt|head')
+                assert e is None, f'e={e}'
+
+                log( '')
+                log( f'== running command after touching {a}')
+                mtime_cache_clear()
+                e = os.system( f'touch {a}')
+                e = system( command, w, verbose='derR', out_prefix='    ', method=method)
+                #os.system( 'ls -lt|head')
+                assert e == 0, f'e={e}'
+
+            log( 'tests passed')
+
+        finally:
+            if 1:
+                remove( build_c)
+                remove( build_h)
+                remove( build_exe)
+                remove( build_walkfile)
+                remove( a)
+                remove( b)
+                remove( c)
     
     
 
@@ -1835,19 +2011,19 @@ def main():
             
         if 0:
             pass
-        elif arg == '-0':
-            force = 0
-        elif arg == '-1':
-            force = 1
         elif arg == '--new':
             path = args.next()
             mtime_cache_mark_new( path)
+        elif arg == 'f':
+            force = int(args.next)
         elif arg == '-h' or arg == '--help':
             sys.stdout.write( __doc__)
         elif arg == '-m':
             method = args.next()
         elif arg == '--test':
             _do_tests()
+            if _osname == 'OpenBSD':
+                _do_tests( method='trace')
         elif arg == '--test-abc':
             a = args.next()
             b = args.next()
