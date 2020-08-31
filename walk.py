@@ -27,7 +27,7 @@ Use as a build system:
     which commands are run, so for example we could choose to compile newer
     source files first, which often finds compilation errors more quickly.
 
-How it work:
+How it works:
 
     The first time we run a command, we create a file <walk_file> which
     contains information about the command and what files the command (or its
@@ -111,13 +111,19 @@ Limitatations:
     
 Implementation details:
 
-    As of 2020-06-01, on Linux we use 'strace' to gather information about a command's
-    input and output files. On OpenBSD we use an LD_PRELOAD library.
-    
-    It's probably preferable to also use an LD_PRELOAD library on Linux as it
-    should be faster, but unfortunately programmes such as ld on Linux appear
-    to open the output file using a function that has proven difficult to
-    intercept.
+    We use two approaches to finding out what files a command (or its
+    sub-command) opened for reading and/or writing - an LD_PRELOAD library
+    which intercepts open() etc, or running commands under a syscall tracer
+    such as Linux's strace or OpenBSD's ktrace.
+
+    As of 2020-06-01, the LD_PRELOAD approach on Linux doesn't work due to
+    ld appearing to open the output file using a function that has proven
+    difficult to intercept. On OpenBSD we can use either approach but default
+    to LD_PRELOAD.
+
+    It's not yet clear which of LD_PRELOAD or strace/ktrace is the better
+    approach overall; maybe LD_PRELOAD could be faster (though this needs
+    profilng) but tracing syscalls could be more reliable.
 
 
 License:
@@ -332,7 +338,6 @@ def system(
     Returns:
         Integer termination status if we run command.
         Otherwise None.
-    
     command:
         Command to run.
     walk_path:
@@ -342,11 +347,11 @@ def system(
         A string where the presence of particular characters controls what
         diagnostics are generated:
         
-            d   Show command description if we run the command.
             c   Show the command itself if we run the command.
+            d   Show command description if we run the command.
             f   Show that we are forcing the command to be run.
-            r   Show the reason for running the command.
             m   Show generic message if we are running the command.
+            r   Show the reason for running the command.
         
         Upper-case versions of the above cause the equivalent messages to be
         generated if we /don't/ run the command.
@@ -361,7 +366,7 @@ def system(
     method:
         None, 'preload' or 'trace'.
 
-        If None, we use default setting for the OS.
+        If None, we use default setting for the OS we are running on.
 
         If 'trace' we use Linux strace or OpenBSD ktrace to find what file
         operations the command used.
@@ -433,14 +438,6 @@ def system(
         with open( walk_path, 'w') as f:
             pass
         
-        # Run command under strace; we analyse strace output to find what files
-        # have been read/written.
-        #
-        # We tell strace to output to autodeps_filename_temp1, then we
-        # write our analysis to autodeps_filename_temp2, and finally mv
-        # to autodeps_filename_temp. So hopefully we are resistent to
-        # crashes/SIGKILL etc.
-        #
         strace_path = walk_path + '-1'
         remove( strace_path)
         
@@ -739,8 +736,8 @@ def _make_diagnostic( verbose, command, description, reason, force, notrun):
     message = message_head
     if message_tail:
         if message:
-            message += ':'
-        message += ' ' + message_tail
+            message += ': '
+        message += message_tail
     
     if 0:
         log( f'verbose={verbose} command={command!r} description={description!r} reason={reason!r}, force={force} notrun={notrun}: returning: {message!r}')
@@ -931,10 +928,12 @@ def _analyse_walk_file( walk_path, command, command_compare=None):
                 else:
                     diff = (command != command_old)
                 if diff:
-                    #log( 'command has changed:')
-                    #log( '    from %s' % command_old)
-                    #log( '    to   %s' % command)
+                    if 0:
+                        log( 'command has changed:')
+                        log( '    from %s' % command_old)
+                        log( '    to   %s' % command)
                     return True, 'command has changed'
+                    #return True, 'command has changed %r => %r' % (command_old, command)
             elif not t_begin and line.startswith( 't_begin: '):
                 t_begin = float( line[ len( 't_begin: '):])
             
@@ -1036,14 +1035,14 @@ def _analyse_walk_file( walk_path, command, command_compare=None):
         elif newest_read > oldest_write:
             doit = True
             reason.append( 'input is new: %r' % (
-                    newest_read_path,
+                    os.path.relpath( newest_read_path)
                     #oldest_write_path,
                     ))
         else:
             doit = False
             reason.append( 'newest input %r not newer then oldest output %r' % (
-                    newest_read_path,
-                    oldest_write_path,
+                    os.path.relpath( newest_read_path),
+                    os.path.relpath( oldest_write_path),
                     ))
     
     reason = ', '.join( reason)
