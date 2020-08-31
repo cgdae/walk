@@ -1,62 +1,13 @@
 #!/usr/bin/env python3
 
-'''
-Build script for Flightgear on Unix systems.
-
+r'''Build script for Flightgear on Unix systems.
 
 Status:
-
     As of 2020-07-05 we can build on Linux Devuan Beowulf and OpenBSD 6.7.
 
 
-Requirements:
-
-    The walk.py command optimiser module.
-    
-    Packages for this script:
-    
-        python3
-        strace
-    
-    Packages for flightgear code:
-    
-        apt install \
-            freeglut3-dev \
-            libasound-dev \
-            libboost-dev \
-            libcurl4-openssl-dev \
-            libdbus-1-dev \
-            libevent-dev \
-            libopenal-dev \
-            libpng-dev \
-            libqt5opengl5-dev \
-            libqt5svg5-dev \
-            libqt5websockets5-dev \
-            libudev-dev \
-            openscenegraph \
-            pkg-config \
-            qml-module-qtquick2 \
-            qml-module-qtquick-dialogs \
-            qml-module-qtquick-window2 \
-            qt5-default \
-            qtbase5-dev-tools \
-            qtbase5-private-dev \
-            qtdeclarative5-dev \
-            qtdeclarative5-private-dev \
-            qttools5-dev \
-            qttools5-dev-tools \
-    
-    For OpenBSD:
-        pkg_add \
-                freeglut \
-                openscenegraph \
-                qtdeclarative \
-                
-
 Usage:
-
     We expect to be in a directory looking like:
-    
         flightgear/
         plib/
         simgear/
@@ -64,28 +15,21 @@ Usage:
         
     Each of these will typically be a git checkout.
     
-    In this directory, run this script (wherever it happens to be).
-    
+    In this directory, run this script (wherever it happens to be).    
         .../walkfg.py -b
     
-    All generated files will be in a new directory:
-    
+    All generated files will be in a new directory:    
         build-walk/
         
-    The generated executable will be called:
-    
+    The generated executable will be called:    
         build-walk/fgfs,debug,opt.exe
     
-    It can be run with:
-    
-        ./build-walk/fgfs,debug,opt.exe --fg-root=fgdata
-    
-    or:
-        ./build-walk/run_fgfs_gdb.sh
+    It can be run with any of these commands:    
+        ./build-walk/fgfs,debug,opt.exe
+        ./build-walk/fgfs,debug,opt.exe-run-gdb.sh
 
 
 Args:
-
     Arguments are processed in the order they occur on the command line, so
     typically -b or --build should be last.
 
@@ -93,11 +37,23 @@ Args:
     --build
         Build fgfs.
     
+    --clang 0 | 1
+        If 1, we force use of clang instead of system compiler.
+        
+        Default is 0.
+    
     --compositor 0 | 1
-        If 1, we build with compositor.
+        If 1 (the default), we build with compositor.
     
     --debug 0 | 1
-        If 1, we compile and link with -g to include debug symbols.
+        If 1 (default), we compile and link with -g to include debug symbols.
+    
+    --flags-all 0 | 1
+        If 1, we use same compiler flags for all files (except for
+        file-specific -W warning flags). So for example everything gets
+        compiled with the same include path and defines.
+        
+        Default is 0.
     
     --force 0 | 1 | default
         If 0, we never run commands; depending on --verbose, we may output
@@ -115,15 +71,21 @@ Args:
     -j N
         Set concurrency level.
     
+    -l <maxload>
+        Only schedule new concurrent commands when load average is less than
+        <maxload>.
+    
+    --link-only
+        Only do link.
+    
+    --new <path>
+        Treat <path> as new.
+
     --old <path>
         Treat <path> as old.
     
     --optimise 0 | 1
-        If 1, we build with compiler optimisations.
-    
-    -o <directory>
-    --out-dir <directory>
-        Set the directory that will contain all generated files.
+        If 1 (the default), we build with compiler optimisations.
     
     --osg <directory>
         Use local OSG install instead of system OSG.
@@ -131,6 +93,12 @@ Args:
         For example:
             (cd openscenegraph; mkdir build; cd build; cmake -DCMAKE_INSTALL_PREFIX=`pwd`/install -DCMAKE_BUILD_TYPE=Debug ..; time make -j 4; make install)
             .../walkfg.py --osg openscenegraph/build/install -b
+    
+    -o <directory>
+    --out-dir <directory>
+        Set the directory that will contain all generated files.
+        
+        Default is build-walk.
     
     --show
         Show settings.
@@ -156,17 +124,60 @@ Args:
             
             e   If command fails, show command if we haven't already shown it.
         
-        Default is 'de'.
+        Default is 'der'.
         
         If arg starts with +/-, we add/remove the specified flags to/from the
         existing settings.
+
+
+Requirements:
+
+    The walk.py command optimiser module.
     
-    --new <path>
-        Treat <path> as new.
+    Packages for this script:
+        python3
+        strace
+    
+    Packages for flightgear:
+    
+        Linux:
+            apt install \
+                freeglut3-dev \
+                libasound-dev \
+                libboost-dev \
+                libcurl4-openssl-dev \
+                libdbus-1-dev \
+                libevent-dev \
+                libopenal-dev \
+                libpng-dev \
+                libqt5opengl5-dev \
+                libqt5svg5-dev \
+                libqt5websockets5-dev \
+                libudev-dev \
+                openscenegraph \
+                pkg-config \
+                qml-module-qtquick2 \
+                qml-module-qtquick-dialogs \
+                qml-module-qtquick-window2 \
+                qt5-default \
+                qtbase5-dev-tools \
+                qtbase5-private-dev \
+                qtdeclarative5-dev \
+                qtdeclarative5-private-dev \
+                qttools5-dev \
+                qttools5-dev-tools \
+    
+        OpenBSD:
+            pkg_add \
+                    freeglut \
+                    openal \
+                    openscenegraph \
+                    qtdeclarative \
 
+'''
 
+'''
 License:
-
     Copyright 2020 Julian Smith.
 
     This program is free software: you can redistribute it and/or modify
@@ -181,7 +192,6 @@ License:
 
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
 '''
 
 import glob
@@ -198,21 +208,24 @@ import walk
 
 g_build_debug = 1
 g_build_optimise = 1
-g_compositor = 1
-g_concurrency = 0
-g_force = None
-g_outdir = 'build-walk'
-g_verbose = None
 g_clang = False
-g_max_load_average = None
+g_compositor = 1
+g_concurrency = 3
+g_flags_all = False
+g_force = None
+g_max_load_average = 6
 g_osg_dir = None
+g_outdir = 'build-walk'
+g_verbose = 'der'
+g_link_only = False
 
 g_os = os.uname()[0]
-g_openbsd = g_os == 'OpenBSD'
-g_linux = g_os == 'Linux'
+g_openbsd = (g_os == 'OpenBSD')
+g_linux = (g_os == 'Linux')
 
 if g_openbsd:
     g_clang = True
+
 
 def system( command, walk_path, description=None, verbose=None):
     '''
@@ -503,7 +516,6 @@ def get_files():
             + files_simgear
             + files_plib
             )
-    #all_files.sort()
 
     ret = []
     exclude_patterns_pos = 0
@@ -533,15 +545,16 @@ def get_files():
     return all_files, ret
 
 
-_gcc_command_compare_regex = None
-def gcc_command_compare( a, b):
-    global _gcc_command_compare_regex
-    if _gcc_command_compare_regex is None:
-        _gcc_command_compare_regex = re.compile( ' (-Wno-[^ ]+)|(-std=[^ ]+)')
-    aa = re.sub( _gcc_command_compare_regex, '', a)
-    bb = re.sub( _gcc_command_compare_regex, '', b)
-    #print( 'aa=%s' % aa)
-    #print( 'bb=%s' % bb)
+_cc_command_compare_regex = None
+def cc_command_compare( a, b):
+    '''
+    Compares cc comamnds, ignoring differences in warning flags.
+    '''
+    global _cc_command_compare_regex
+    if _cc_command_compare_regex is None:
+        _cc_command_compare_regex = re.compile( ' (-Wno-[^ ]+)|(-std=[^ ]+)')
+    aa = re.sub( _cc_command_compare_regex, '', a)
+    bb = re.sub( _cc_command_compare_regex, '', b)
     ret = aa != bb
     ret0 = a != b
     if not ret and ret0:
@@ -551,14 +564,484 @@ def gcc_command_compare( a, b):
         assert 0
     return ret
 
-if 0:
-    print( re.sub( ' -Wno-[^ ]+', '', 'gcc -o foo bar.c -Wno-xyz -Werror'))
-    print( gcc_command_compare( 'gcc -o foo bar.c -Wno-xyz -Werror', 'gcc -o foo bar.c -Wno-xyz -Werror'))
-    print( gcc_command_compare( 'gcc -o foo bar.c -Wno-xyz -Werror', 'gcc -o foo bar.c -Werror'))
-    print( gcc_command_compare( 'gcc -o foo bar.c -Wno-xyz -Werror', 'gcc -o foo bar.c -Wno-q -Werror'))
-    print( gcc_command_compare( 'gcc -o foo bar.c -Wno-xyz -Werror', 'gcc -o foo bar.c -O2 -Werror'))
+if 1:
+    assert cc_command_compare( 'cc -o foo bar.c -Wno-xyz -Werror', 'cc -o foo bar.c -Wno-xyz -Werror') == 0
+    assert cc_command_compare( 'cc -o foo bar.c -Wno-xyz -Werror', 'cc -o foo bar.c -Werror') == 0
+    assert cc_command_compare( 'cc -o foo bar.c -Wno-xyz -Werror', 'cc -o foo bar.c -Wno-q -Werror') == 0
+    assert cc_command_compare( 'cc -o foo bar.c -Wno-xyz -Werror', 'cc -o foo bar.c -O2 -Werror') != 0
 
-def build( link_only=False):
+
+
+class CompileFlags:
+    '''
+    Compile flags for different parts of the source tree.
+    '''
+    def __init__( self):
+        self.items = []
+    
+    def add( self, path_prefixes, flags):
+        assert flags == '' or flags.startswith( ' ')
+        flags = flags.replace( ' -D ', ' -D')
+        flags = flags.replace( ' -I ', ' -I')
+        if isinstance( path_prefixes, str):
+            path_prefixes = path_prefixes,
+        self.items.append( ( path_prefixes, flags))
+    
+    def get_flags( self, path):
+        '''
+        Returns compile flags for compiling <path>.
+        '''
+        ret = ''
+        for path_prefixes, flags in self.items:
+            for path_prefix in path_prefixes:
+                #walk.log( 'looking at path_prefix: %s' % path_prefix)
+                if path.startswith( path_prefix):
+                    #walk.log( 'adding flags: %s' % flags)
+                    ret += flags
+                    break
+        return ret
+    
+    def get_flags_all( self, path):
+        '''
+        Returns compile flags for compiling <path>, using a union of all flags
+        except for warning flags which are calculated specificall for <path>.
+        '''
+        ret_flags = set()
+        ret = ''
+        ret_warnings = ''
+        for path_prefixes, flags in self.items:
+            match = False
+            for path_prefix in path_prefixes:
+                if path.startswith( path_prefix):
+                    match = True
+                    break
+            for flag in flags.split():
+                flag = flag.strip()
+                if flag in ret_flags:
+                    continue
+                is_warning = flag.startswith( '-W')
+                if is_warning:
+                    if match:
+                        ret_flags.add( flag)
+                        ret_warnings += ' %s' % flag
+                else:
+                    ret_flags.add( flag)
+                    for prefix in 'DI':
+                        if flag.startswith( '-'+prefix):
+                            flag = '-%s %s' % (prefix, flag[2:])
+                    ret += ' %s' % flag
+                    
+        return ret + ret_warnings
+
+
+g_compositor_prefixes = (        
+        'flightgear/src/Canvas/',
+        'flightgear/src/Scenery/',
+        'flightgear/src/GUI/',
+        'flightgear/src/Main/',
+        'flightgear/src/Viewer/',
+        'flightgear/src/Time/',
+        'flightgear/src/Cockpit/',
+        'flightgear/src/Network/',
+        'flightgear/src/Environment/',
+        )
+
+def make_compile_flags( libs_cflags, cpp_feature_defines):
+    '''
+    Returns a CompileFlags instance set up for building Flightgear.
+    '''     
+    cf = CompileFlags()
+
+    cf.add( (
+            'flightgear/3rdparty/cjson/cJSON.c',
+            'flightgear/3rdparty/iaxclient/lib/gsm/src/rpe.c',
+            'flightgear/3rdparty/sqlite3/sqlite3.c',
+            'flightgear/src/FDM/JSBSim/JSBSim.cxx',
+            'flightgear/src/GUI/FGQmlPropertyNode.cxx',
+            'flightgear/src/MultiPlayer/multiplaymgr.cxx',
+            'flightgear/src/Radio/itm.cpp',
+            'flightgear/src/Radio/itm.cpp',
+            'flightgear/src/Viewer/PUICamera.cxx',
+            'simgear/3rdparty/expat/xmlparse.c',
+            'simgear/3rdparty/expat/xmltok_impl.c',
+            'simgear/simgear/canvas/ShivaVG/src/shGeometry.c',
+            'simgear/simgear/canvas/ShivaVG/src/shPipeline.c',
+            ),
+            ' -Wno-implicit-fallthrough'
+            )
+    
+    if g_clang:
+        cf.add( (
+                'flightgear/',
+                'simgear/',
+                'plib/',
+                ),
+                    ' -Wno-inconsistent-missing-override'
+                    ' -Wno-overloaded-virtual'
+                    ' -Wno-macro-redefined'
+                )
+    
+    cf.add( (
+            'flightgear/3rdparty/flite_hts_engine/flite/',
+            'flightgear/3rdparty/hts_engine_API/lib',
+            'flightgear/3rdparty/iaxclient/lib',
+            'flightgear/3rdparty/iaxclient/lib/gsm/src/preprocess.c',
+            'flightgear/src/GUI',
+            'flightgear/src/Navaids/FlightPlan.cxx',
+            'simgear/simgear/canvas/elements/CanvasImage.cxx',
+            'simgear/simgear/nasal/codegen.c',
+            'simgear/simgear/nasal/iolib.c',
+            'simgear/simgear/nasal/parse.c',
+            'simgear/simgear/nasal/utf8lib.c',
+            'simgear/simgear/nasal/utf8lib.c',
+            ),
+            ' -Wno-sign-compare'
+            )
+    cf.add( (
+            'flightgear/3rdparty/iaxclient/lib/iaxclient_lib.c',
+            'flightgear/3rdparty/iaxclient/lib/libiax2/src/iax.c',
+            'flightgear/3rdparty/iaxclient/lib/unixfuncs.c',
+            'flightgear/3rdparty/sqlite3/sqlite3.c',
+            ),
+            ' -Wno-cast-function-type'
+            )
+    cf.add( (
+            'flightgear/3rdparty/iaxclient/lib/libiax2/src/iax2-parser.c',
+            'flightgear/3rdparty/iaxclient/lib/libiax2/src/iax.c',
+            'flightgear/3rdparty/mongoose/mongoose.c',
+            'flightgear/src/Airports/runways.cxx',
+            'flightgear/src/ATC/trafficcontrol.cxx',
+            'flightgear/src/FDM/ExternalNet/ExternalNet.cxx',
+            'flightgear/src/FDM/LaRCsim/ls_interface.c',
+            'flightgear/src/GUI/gui_funcs.cxx',
+            'flightgear/src/Instrumentation/clock.cxx',
+            'flightgear/src/Instrumentation/gps.cxx',
+            'flightgear/src/Instrumentation/KLN89/kln89_page_alt.cxx',
+            'flightgear/src/Instrumentation/KLN89/kln89_page_apt.cxx',
+            'flightgear/src/Instrumentation/KLN89/kln89_page_cal.cxx',
+            'flightgear/src/Instrumentation/kr_87.cxx',
+            'flightgear/src/Network/atlas.cxx',
+            'flightgear/src/Network/nmea.cxx',
+            ),
+            ' -Wno-format-truncation'
+            )
+
+
+    cf.add( (
+            'flightgear/src/FDM/YASim/',
+            'flightgear/src/Radio/itm.cpp',
+            'simgear/simgear/structure/SGExpression.cxx',
+            'simgear/simgear/structure/subsystem_mgr.cxx',
+            ),
+            ' -Wno-unused-variable'
+            )
+
+    cf.add( (
+            'flightgear/3rdparty/flite_hts_engine/flite/src',
+            'flightgear/src/Radio/itm.cpp',
+            'simgear/simgear/structure/SGExpression.cxx',
+            'simgear/simgear/structure/subsystem_mgr.cxx',
+            ),
+            ' -Wno-unused-function'
+            )
+
+    cf.add( (
+            'flightgear/3rdparty/flite_hts_engine/flite/src/lexicon/cst_lexicon.c',
+            ),
+            ' -Wno-discarded-qualifiers'
+            )
+
+    cf.add( (
+            'flightgear/3rdparty/iaxclient/lib/gsm/src/short_term.c',
+            'flightgear/3rdparty/iaxclient/lib/libspeex/bits.c',
+            ),
+            ' -Wno-shift-negative-value'
+            )
+
+    cf.add( (
+            'flightgear/3rdparty/iaxclient/lib/iaxclient_lib.c',
+            'flightgear/3rdparty/iaxclient/lib/libiax2/src/iax.c',
+            ),
+            ' -Wno-stringop-truncation'
+            )
+
+    cf.add( (
+            'simgear/3rdparty/expat/xmltok.c',
+            ),
+            ' -Wno-missing-field-initializers'
+            )
+
+    cf.add( '', libs_cflags)
+
+    # Include/define flags.
+
+    cf.add( (
+            'flightgear/',
+            '%s/flightgear/' % g_outdir,
+            'simgear/',
+            '%s/simgear/' % g_outdir,
+            '%s/walk-generated/flightgear/' % g_outdir,
+            ),
+            cpp_feature_defines
+            )
+
+    cf.add( (
+            'flightgear/',
+            '%s/flightgear/' % g_outdir,
+            ),
+            ' -I simgear'
+            ' -I flightgear/src'
+            ' -I %s/walk-generated'
+            ' -D ENABLE_AUDIO_SUPPORT'
+            ' -D JENKINS_BUILD_NUMBER=0'
+            ' -D JENKINS_BUILD_ID=0'
+            % g_outdir
+            )
+
+    cf.add( (
+            'flightgear/src/',
+            ),
+            ' -I flightgear/3rdparty/cjson'
+            ' -I flightgear/3rdparty/cjson'
+            ' -I flightgear/3rdparty/iaxclient/lib'
+            ' -I flightgear/3rdparty/mongoose'
+            )
+
+    cf.add( (
+            'flightgear/src/AIModel/',
+            ),
+            ' -I flightgear'
+            )
+
+    cf.add(
+            'flightgear/3rdparty/iaxclient'
+            ,
+            ' -I flightgear/3rdparty/iaxclient/lib/portaudio/bindings/cpp/include'
+            ' -I flightgear/3rdparty/iaxclient/lib/portaudio/include'
+            ' -I flightgear/3rdparty/iaxclient/lib/libiax2/src'
+            ' -I flightgear/3rdparty/iaxclient/lib/portmixer/px_common'
+            ' -I flightgear/3rdparty/iaxclient/lib/gsm/inc'
+            ' -D LIBIAX'
+            ' -D AUDIO_OPENAL'
+            ' -D ENABLE_ALSA'
+            )
+    if g_linux:
+        cf.add(
+                'flightgear/3rdparty/iaxclient'
+                ,
+                ' -I flightgear/3rdparty/iaxclient/lib/libspeex/include'
+                )
+
+    cf.add( 'flightgear/3rdparty/joystick'
+            ,
+            ' -I flightgear/3rdparty/joystick/lib/portaudio/bindings/cpp/include'
+            ' -I flightgear/3rdparty/joystick/lib/portaudio/include'
+            )
+
+    cf.add( 'flightgear/src/FDM/JSBSim/'
+            ,
+            ' -I flightgear/src/FDM/JSBSim'
+            )
+
+    cf.add( 'flightgear/src/FDM/'
+            ,
+            ' -I flightgear/src/FDM/JSBSim'
+            ' -D ENABLE_JSBSIM'
+            ' -D ENABLE_YASIM'
+            )
+
+    cf.add( 'flightgear/src/FDM/JSBSim/FGJSBBase.cpp'
+            ,
+            ' -D JSBSIM_VERSION="\\"compiled from FlightGear 2020.2.0\\""'
+            )
+
+    cf.add( 'flightgear/src/FDM/SP/AISim.cpp'
+            ,
+            ' -D ENABLE_SP_FDM'
+            )
+
+    cf.add( (
+            'flightgear/src/GUI/',
+            '%s/flightgear/src/GUI/' % g_outdir,
+            ),
+            ' -I %s/walk-generated/Include'
+            ' -I flightgear/3rdparty/fonts'
+            ' -I %s/flightgear/src/GUI'
+            % (g_outdir, g_outdir)
+            )
+
+    cf.add( (
+            'flightgear/src/Viewer/',
+            '%s/flightgear/src/Viewer/' % g_outdir,
+            ),
+            ' -D HAVE_PUI'
+            )
+
+    cf.add( 'flightgear/src/Input/',
+            ' -I flightgear/3rdparty/hidapi'
+            ' -I flightgear/3rdparty/joystick'
+            ' -D HAVE_CONFIG_H'
+            )
+
+    cf.add( 'flightgear/3rdparty/fonts/',
+            ' -I %s/walk-generated/plib-include' % g_outdir
+            )
+
+    cf.add( 'flightgear/3rdparty/hidapi/',
+            ' -I flightgear/3rdparty/hidapi/hidapi'
+            )
+
+    cf.add( 'flightgear/src/Instrumentation/HUD/',
+            ' -I flightgear/3rdparty/fonts'
+            ' -I %s/walk-generated/plib-include' % g_outdir
+            )
+
+
+    if g_linux:
+        cf.add( 'flightgear/src/Airports/',
+                ' -DBOOST_BIMAP_DISABLE_SERIALIZATION -DBOOST_NO_STDLIB_CONFIG -DBOOST_NO_AUTO_PTR -DBOOST_NO_CXX98_BINDERS'
+                )
+
+    cf.add( 'flightgear/src/Main/',
+            ' -I flightgear'
+            ' -D HAVE_CONFIG_H'
+            )
+
+    cf.add( 'flightgear/src/MultiPlayer',
+            ' -I flightgear'
+            )
+
+    cf.add( 'flightgear/src/Navaids',
+            ' -I flightgear/3rdparty/sqlite3'
+            )
+
+    cf.add('flightgear/src/Network',
+            ' -I flightgear'
+            )
+
+    cf.add( 'flightgear/src/Scripting/',
+            ' -D HAVE_SYS_TIME_H'
+            )
+
+    cf.add( 'flightgear/src/Sound',
+            ' -I flightgear/3rdparty/flite_hts_engine/include'
+            ' -I flightgear/3rdparty/hts_engine_API/include'
+            )
+
+    cf.add( 'flightgear/src/Cockpit',
+            ' -I flightgear/3rdparty/fonts'
+            )
+
+    cf.add( 'simgear/simgear/',
+            ' -I simgear'
+            ' -I simgear/simgear/canvas/ShivaVG/include'
+            ' -I simgear/3rdparty/udns'
+            ' -I %s/walk-generated'
+            ' -I %s/walk-generated/simgear'
+            ' -D HAVE_STD_INDEX_SEQUENCE' # prob not necessary.
+            % (g_outdir, g_outdir)
+            )
+
+    cf.add( (
+            'simgear/simgear/canvas/Canvas.cxx',
+            'flightgear/src/AIModel/AIBase.cxx',
+            ),
+            cpp_feature_defines
+            )
+
+    cf.add( 'simgear/simgear/sound',
+            ' -D ENABLE_SOUND'
+            )
+
+    cf.add( 'simgear/simgear/xml',
+            ' -I simgear/3rdparty/expat'
+            )
+
+    cf.add('simgear/3rdparty/expat',
+            ' -D HAVE_MEMMOVE'
+            )
+
+    cf.add('plib/',
+            ' -I plib/src/fnt'
+            ' -I plib/src/sg'
+            ' -I plib/src/util'
+            ' -I plib/src/pui'
+            ' -Wno-dangling-else'
+            ' -Wno-empty-body'
+            ' -Wno-extra'
+            ' -Wno-format-overflow'
+            ' -Wno-ignored-qualifiers'
+            ' -Wno-implicit-fallthrough'
+            ' -Wno-int-to-pointer-cast'
+            ' -Wno-maybe-uninitialized'
+            ' -Wno-misleading-indentation'
+            ' -Wno-missing-field-initializers'
+            ' -Wno-missing-field-initializers'
+            ' -Wno-parentheses'
+            ' -Wno-restrict'
+            ' -Wno-stringop-overflow'
+            ' -Wno-stringop-truncation'
+            ' -Wno-stringop-truncation'
+            ' -Wno-type-limits'
+            ' -Wno-unused-but-set-variable'
+            ' -Wno-unused-function'
+            ' -Wno-unused-variable'
+            ' -Wno-write-strings'
+            )
+
+    if g_openbsd:
+        cf.add( 'plib/',
+            ' -I /usr/X11R6/include'
+            )
+
+    cf.add( 'plib/src/ssgAux',
+            ' -I plib/src/ssg'
+            )
+
+    cf.add('%s/walk-generated/EmbeddedResources' % g_outdir,
+            ' -I simgear'
+            )
+
+    cf.add( 'flightgear/3rdparty/flite_hts_engine',
+            ' -I flightgear/3rdparty/flite_hts_engine/flite/include'
+            ' -I flightgear/3rdparty/flite_hts_engine/include'
+            ' -I flightgear/3rdparty/hts_engine_API/include'
+            ' -I flightgear/3rdparty/flite_hts_engine/flite/lang/usenglish'
+            ' -I flightgear/3rdparty/flite_hts_engine/flite/lang/cmulex'
+            ' -D FLITE_PLUS_HTS_ENGINE'
+            )
+
+    cf.add( 'flightgear/3rdparty/hts_engine_API/lib',
+            ' -I flightgear/3rdparty/hts_engine_API/include'
+            )
+
+
+    cf.add( 'simgear/simgear/canvas/ShivaVG',
+            ' -D HAVE_INTTYPES_H'
+            )
+
+    cf.add( (
+            'flightgear/src/ATC/',
+            'flightgear/src/Cockpit/',
+            'flightgear/src/GUI/',
+            'flightgear/src/Main/',
+            'flightgear/src/Model/',
+            'flightgear/src/Viewer/',
+            ),
+            ' -I %s/walk-generated/plib-include' % g_outdir
+            )
+    
+    if g_compositor:
+        cf.add( g_compositor_prefixes, ' -D ENABLE_COMPOSITOR')
+    
+    return cf
+
+
+
+def build():
+    '''
+    Builds Flightgear using g_* settings.
+    '''
 
     if g_openbsd:
         # clang needs around 2G to compile
@@ -574,6 +1057,20 @@ def build( link_only=False):
             walk.log( f'Have changed RLIMIT_DATA from {soft} to {soft_new}')
 
     all_files, src_fgfs = get_files()
+
+    # Create patched version of plib/src/sl/slDSP.cxx.
+    path = 'plib/src/sl/slDSP.cxx'
+    path_patched = path + '-patched.cxx'
+    with open(path) as f:
+        text = f.read()
+    text = text.replace(
+            '#elif (defined(UL_BSD) && !defined(__FreeBSD__)) || defined(UL_SOLARIS)',
+            '#elif (defined(UL_BSD) && !defined(__FreeBSD__) && !defined(__OpenBSD__)) || defined(UL_SOLARIS)',
+            )
+    walk.file_write( text, path_patched)
+    src_fgfs.remove(path)
+    src_fgfs.append( path_patched)
+    
 
     # Generate .moc files. We look for files containing Q_OBJECT.
     #
@@ -712,7 +1209,6 @@ def build( link_only=False):
             '%s/walk-generated/simgear/simgear_config.h' % g_outdir,
             )
 
-
     # Create various other headers.
     #
     file_write(
@@ -837,8 +1333,8 @@ def build( link_only=False):
     gcc_base = 'cc'
     gpp_base = 'c++ -std=gnu++17'
     if g_clang:
-        gcc_base = 'clang'
-        gpp_base = 'clang++ -std=c++14'
+        gcc_base = 'clang -Wno-unknown-warning-option'
+        gpp_base = 'clang++ -std=c++14 -Wno-unknown-warning-option'
     gcc_base += ' -pthread -W -Wall -fPIC -Wno-unused-parameter'
     gpp_base += ' -pthread -W -Wall -fPIC -Wno-unused-parameter'
     
@@ -886,6 +1382,9 @@ def build( link_only=False):
     
     if g_osg_dir:
         exe += ',osg'
+    
+    if g_flags_all:
+        exe += ',flags-all'
 
     exe += '.exe'
 
@@ -1025,429 +1524,36 @@ def build( link_only=False):
                 command += ' -g'
                 path_o += ',debug'
             if g_build_optimise:
-                command += ' -O2'
+                command += ' -O3 -msse2 -mfpmath=sse -ftree-vectorize -ftree-slp-vectorize'
                 path_o += ',opt'
+            
 
             if g_compositor:
-                if (0
-                        or path.startswith( 'flightgear/src/Canvas/')
-                        or path.startswith( 'flightgear/src/Scenery/')
-                        or path.startswith( 'flightgear/src/GUI/')
-                        or path.startswith( 'flightgear/src/Main/')
-                        or path.startswith( 'flightgear/src/Viewer/')
-                        or path.startswith( 'flightgear/src/Time/')
-                        or path.startswith( 'flightgear/src/Cockpit/')
-                        or path.startswith( 'flightgear/src/Network/')
-                        or path.startswith( 'flightgear/src/Environment/')
-                        ):
-                    path_o += ',compositor'
-                    command += ' -D ENABLE_COMPOSITOR'
+                for prefix in g_compositor_prefixes:
+                    if path.startswith( prefix):
+                        path_o += ',compositor'
+                        break
             
             if g_osg_dir:
                 path_o += ',osg'
                 command += f' -I {g_osg_dir}/include'
-
-            # Add various args to the compile command depending on source path.
-            #
-            # We could probably use many of the same flags for everything.
-            #
             
-            # Warnings.
-            #
-            if path in (
-                    'flightgear/3rdparty/cjson/cJSON.c',
-                    'flightgear/3rdparty/iaxclient/lib/gsm/src/rpe.c',
-                    'flightgear/3rdparty/sqlite3/sqlite3.c',
-                    'flightgear/src/FDM/JSBSim/JSBSim.cxx',
-                    'flightgear/src/GUI/FGQmlPropertyNode.cxx',
-                    'flightgear/src/MultiPlayer/multiplaymgr.cxx',
-                    'flightgear/src/Radio/itm.cpp',
-                    'flightgear/src/Radio/itm.cpp',
-                    'flightgear/src/Viewer/PUICamera.cxx',
-                    'simgear/3rdparty/expat/xmlparse.c',
-                    'simgear/3rdparty/expat/xmltok_impl.c',
-                    'simgear/simgear/canvas/ShivaVG/src/shGeometry.c',
-                    'simgear/simgear/canvas/ShivaVG/src/shPipeline.c',
-                    ):
-                command += ' -Wno-implicit-fallthrough'
-            
-            if g_clang and (0
-                    or path.startswith( 'flightgear/')
-                    or path.startswith( 'simgear/')
-                    or path.startswith( 'plib/')
-                    ):
-                command += (
-                        ' -Wno-inconsistent-missing-override'
-                        ' -Wno-overloaded-virtual'
-                        ' -Wno-macro-redefined'
-                        )
-            
-            if (0
-                    or path.startswith( 'flightgear/3rdparty/flite_hts_engine/flite/')
-                    or path.startswith( 'flightgear/3rdparty/hts_engine_API/lib')
-                    or path.startswith( 'flightgear/3rdparty/iaxclient/lib')
-                    or path.startswith( 'flightgear/3rdparty/iaxclient/lib/gsm/src/preprocess.c')
-                    or path.startswith( 'flightgear/src/GUI')
-                    or path.startswith( 'flightgear/src/Navaids/FlightPlan.cxx')
-                    or path.startswith( 'simgear/simgear/canvas/elements/CanvasImage.cxx')
-                    or path.startswith( 'simgear/simgear/nasal/codegen.c')
-                    or path.startswith( 'simgear/simgear/nasal/iolib.c')
-                    or path.startswith( 'simgear/simgear/nasal/parse.c')
-                    or path.startswith( 'simgear/simgear/nasal/utf8lib.c')
-                    or path.startswith( 'simgear/simgear/nasal/utf8lib.c')
-                    ):
-                command += ' -Wno-sign-compare'
-            
-            if (0
-                    or path.startswith( 'flightgear/3rdparty/iaxclient/lib/iaxclient_lib.c')
-                    or path.startswith( 'flightgear/3rdparty/iaxclient/lib/libiax2/src/iax.c')
-                    or path.startswith( 'flightgear/3rdparty/iaxclient/lib/unixfuncs.c')
-                    or path.startswith( 'flightgear/3rdparty/sqlite3/sqlite3.c')
-                    ):
-                command += ' -Wno-cast-function-type'
-            
-            if (0
-                    or path.startswith( 'flightgear/3rdparty/iaxclient/lib/libiax2/src/iax2-parser.c')
-                    or path.startswith( 'flightgear/3rdparty/iaxclient/lib/libiax2/src/iax.c')
-                    or path.startswith( 'flightgear/3rdparty/mongoose/mongoose.c')
-                    or path.startswith( 'flightgear/src/Airports/runways.cxx')
-                    or path.startswith( 'flightgear/src/ATC/trafficcontrol.cxx')
-                    or path.startswith( 'flightgear/src/FDM/ExternalNet/ExternalNet.cxx')
-                    or path.startswith( 'flightgear/src/FDM/LaRCsim/ls_interface.c')
-                    or path.startswith( 'flightgear/src/GUI/gui_funcs.cxx')
-                    or path.startswith( 'flightgear/src/Instrumentation/clock.cxx')
-                    or path.startswith( 'flightgear/src/Instrumentation/gps.cxx')
-                    or path.startswith( 'flightgear/src/Instrumentation/KLN89/kln89_page_alt.cxx')
-                    or path.startswith( 'flightgear/src/Instrumentation/KLN89/kln89_page_apt.cxx')
-                    or path.startswith( 'flightgear/src/Instrumentation/KLN89/kln89_page_cal.cxx')
-                    or path.startswith( 'flightgear/src/Instrumentation/kr_87.cxx')
-                    or path.startswith( 'flightgear/src/Network/atlas.cxx')
-                    or path.startswith( 'flightgear/src/Network/nmea.cxx')
-                    ):
-                command += ' -Wno-format-truncation'
-            
-            if (0
-                    or path.startswith( 'flightgear/src/FDM/YASim/')
-                    or path.startswith( 'flightgear/src/Radio/itm.cpp')
-                    or path.startswith( 'simgear/simgear/structure/SGExpression.cxx')
-                    or path.startswith( 'simgear/simgear/structure/subsystem_mgr.cxx')
-                    ):
-                command += ' -Wno-unused-variable'
-            
-            if (0
-                    or path.startswith( 'flightgear/3rdparty/flite_hts_engine/flite/src')
-                    or path.startswith( 'flightgear/src/Radio/itm.cpp')
-                    or path.startswith( 'simgear/simgear/structure/SGExpression.cxx')
-                    or path.startswith( 'simgear/simgear/structure/subsystem_mgr.cxx')
-                    ):
-                command += ' -Wno-unused-function'
-            
-            if (0
-                    or path.startswith( 'flightgear/3rdparty/flite_hts_engine/flite/src/lexicon/cst_lexicon.c')
-                    ):
-                command += ' -Wno-discarded-qualifiers'
-            
-            if (0
-                    or path.startswith( 'flightgear/3rdparty/iaxclient/lib/gsm/src/short_term.c')
-                    or path.startswith( 'flightgear/3rdparty/iaxclient/lib/libspeex/bits.c')
-                    ):
-                command += ' -Wno-shift-negative-value'
-            
-            if (0
-                    or path.startswith( 'flightgear/3rdparty/iaxclient/lib/iaxclient_lib.c')
-                    or path.startswith( 'flightgear/3rdparty/iaxclient/lib/libiax2/src/iax.c')
-                    ):
-                command += ' -Wno-stringop-truncation'
-            
-            if (0
-                    or path.startswith( 'simgear/3rdparty/expat/xmltok.c')
-                    ):
-                command += ' -Wno-missing-field-initializers'
-            
-            if (0
-                    
-                    ):
-                command += ' -Wno-'
-            
-            command += libs_cflags
-            
-            # Include/define flags.
-            if (0
-                    or path.startswith( 'flightgear/')
-                    or path.startswith( '%s/flightgear/' % g_outdir)
-                    or path.startswith( 'simgear/')
-                    or path.startswith( '%s/simgear/' % g_outdir)
-                    or path.startswith( '%s/walk-generated/flightgear/' % g_outdir)
-                    ):
-                
-                command += cpp_feature_defines
+            cf = make_compile_flags( libs_cflags, cpp_feature_defines)
 
-            if path.startswith( 'flightgear/') or path.startswith( '%s/flightgear/' % g_outdir):
-                stdcpp = ''
-                if path.endswith( '.c'):
-                    stdcpp = ''
-                command += (
-                        ' -I simgear'
-                        ' -I flightgear/src'
-                        ' -I %s/walk-generated'
-                        '%s'
-                        ' -D ENABLE_AUDIO_SUPPORT'
-                        ' -D JENKINS_BUILD_NUMBER=0'
-                        ' -D JENKINS_BUILD_ID=0'
-                        % (g_outdir, stdcpp)
-                        )
+            if g_flags_all:
+                path_o += ',flags-all'
+                command = command + cf.get_flags_all( path)
+            else:
+                command = command + cf.get_flags( path)
 
-            if path.startswith( 'flightgear/src/AIModel/'):
-                command +=  (
-                        ' -I flightgear'
-                        )
-            if path.startswith( 'flightgear/3rdparty/iaxclient'):
-                command += (
-                        ' -I flightgear/3rdparty/iaxclient/lib/portaudio/bindings/cpp/include'
-                        ' -I flightgear/3rdparty/iaxclient/lib/portaudio/include'
-                        ' -I flightgear/3rdparty/iaxclient/lib/libiax2/src'
-                        ' -I flightgear/3rdparty/iaxclient/lib/portmixer/px_common'
-                        ' -I flightgear/3rdparty/iaxclient/lib/gsm/inc'
-                        ' -D LIBIAX'
-                        ' -D AUDIO_OPENAL'
-                        ' -D ENABLE_ALSA'
-                        )
-                if g_linux:
-                    command += ' -I flightgear/3rdparty/iaxclient/lib/libspeex/include'
-
-            if path.startswith( 'flightgear/3rdparty/joystick'):
-                command += (
-                        ' -I flightgear/3rdparty/joystick/lib/portaudio/bindings/cpp/include'
-                        ' -I flightgear/3rdparty/joystick/lib/portaudio/include'
-                        )
-
-            if path.startswith( 'flightgear/src/FDM/JSBSim/'):
-                command += (
-                        ' -I flightgear/src/FDM/JSBSim'
-                        )
-
-            if path.startswith( 'flightgear/src/FDM/'):
-                command += (
-                        ' -I flightgear/src/FDM/JSBSim'
-                        ' -D ENABLE_JSBSIM'
-                        ' -D ENABLE_YASIM'
-                        )
-
-            if path.startswith( 'flightgear/src/FDM/JSBSim/FGJSBBase.cpp'):
-                command += (
-                        ' -D JSBSIM_VERSION="\\"compiled from FlightGear 2020.2.0\\""'
-                        )
-
-            if path.startswith( 'flightgear/src/FDM/SP/AISim.cpp'):
-                command += (
-                        ' -D ENABLE_SP_FDM'
-                        )
-
-            if path.startswith( 'flightgear/src/GUI/') or path.startswith( '%s/flightgear/src/GUI/' % g_outdir):
-                command += (
-                        ' -I %s/walk-generated/Include'
-                        ' -I flightgear/3rdparty/fonts'
-                        ' -I %s/flightgear/src/GUI'
-                        % (g_outdir, g_outdir)
-                        )
-
-
-            if path.startswith( 'flightgear/src/Viewer/') or path.startswith( '%s/flightgear/src/Viewer/' % g_outdir):
-                command += (
-                        ' -D HAVE_PUI'
-                        #' %s' % cflags_libs
-                        )
-
-            if path.startswith( 'flightgear/src/Input/'):
-                command += (
-                        ' -I flightgear/3rdparty/hidapi'
-                        ' -I flightgear/3rdparty/joystick'
-                        ' -D HAVE_CONFIG_H'
-                        )
-
-            if path.startswith( 'flightgear/3rdparty/fonts/'):
-                command += (
-                        ' -I build-walk/walk-generated/plib-include'
-                        )
-            
-            if path.startswith( 'flightgear/3rdparty/hidapi/'):
-                command += (
-                        ' -I flightgear/3rdparty/hidapi/hidapi'
-                        )
-
-            if path.startswith( 'flightgear/src/Instrumentation/HUD/'):
-                command += (
-                        ' -I flightgear/3rdparty/fonts'
-                        ' -I build-walk/walk-generated/plib-include'
-                        )
-
-
-            if path.startswith( 'flightgear/src/Airports/'):
-                if g_linux:
-                    command += (
-                            ' -DBOOST_BIMAP_DISABLE_SERIALIZATION -DBOOST_NO_STDLIB_CONFIG -DBOOST_NO_AUTO_PTR -DBOOST_NO_CXX98_BINDERS'
-                            )
-            
-            if path.startswith( 'flightgear/src/Main/'):
-                command += (
-                        ' -I flightgear'
-                        ' -D HAVE_CONFIG_H'
-                        #' %s' % cflags_libs2
-                        )
-
-            if path.startswith( 'flightgear/src/MultiPlayer'):
-                command += (
-                        ' -I flightgear'
-                        )
-
-            if path.startswith( 'flightgear/src/Navaids'):
-                command += (
-                        ' -I flightgear/3rdparty/sqlite3'
-                        )
-
-            if path.startswith( 'flightgear/src/Network'):
-                command += (
-                        ' -I flightgear'
-                        #' %s' % cflags_libs3
-                )
-
-            if path.startswith( 'flightgear/src/Scripting/'):
-                command += (
-                        ' -D HAVE_SYS_TIME_H'
-                        )
-
-            if path.startswith( 'flightgear/src/Sound'):
-                command += (
-                        ' -I flightgear/3rdparty/flite_hts_engine/include'
-                        ' -I flightgear/3rdparty/hts_engine_API/include'
-                        )
-
-            if path.startswith( 'flightgear/src/Cockpit'):
-                command += (
-                        ' -I flightgear/3rdparty/fonts'
-                        )
-
-            if path.startswith( 'simgear/simgear/'):
-                command += (
-                        ' -I simgear'
-                        ' -I simgear/simgear/canvas/ShivaVG/include'
-                        ' -I simgear/3rdparty/udns'
-                        ' -I %s/walk-generated'
-                        ' -I %s/walk-generated/simgear'
-                        ' -D HAVE_STD_INDEX_SEQUENCE' # prob not necessary.
-                        % (g_outdir, g_outdir)
-                        )
-            if (0
-                    or path.startswith( 'simgear/simgear/canvas/Canvas.cxx')
-                    or path.startswith( 'flightgear/src/AIModel/AIBase.cxx')
-                    ):
-                command += cpp_feature_defines
-            
-            if path.startswith( 'simgear/simgear/sound'):
-                command += (
-                        ' -D ENABLE_SOUND'
-                        )
-
-            if path.startswith( 'simgear/simgear/xml'):
-                command += (
-                        ' -I simgear/3rdparty/expat'
-                        )
-
-            if path.startswith( 'simgear/3rdparty/expat'):
-                command += (
-                        ' -D HAVE_MEMMOVE'
-                        )
-
-            if path.startswith( 'plib/'):
-                command += (
-                        ' -I plib/src/fnt'
-                        ' -I plib/src/sg'
-                        ' -I plib/src/util'
-                        ' -I plib/src/pui'
-                        ' -Wno-dangling-else'
-                        ' -Wno-empty-body'
-                        ' -Wno-extra'
-                        ' -Wno-format-overflow'
-                        ' -Wno-ignored-qualifiers'
-                        ' -Wno-implicit-fallthrough'
-                        ' -Wno-int-to-pointer-cast'
-                        ' -Wno-maybe-uninitialized'
-                        ' -Wno-misleading-indentation'
-                        ' -Wno-missing-field-initializers'
-                        ' -Wno-missing-field-initializers'
-                        ' -Wno-parentheses'
-                        ' -Wno-restrict'
-                        ' -Wno-stringop-overflow'
-                        ' -Wno-stringop-truncation'
-                        ' -Wno-stringop-truncation'
-                        ' -Wno-type-limits'
-                        ' -Wno-unused-but-set-variable'
-                        ' -Wno-unused-function'
-                        ' -Wno-unused-variable'
-                        ' -Wno-write-strings'
-                        )
-                
-                if g_openbsd:
-                    command += ' -I /usr/X11R6/include'
-
-            if path.startswith( 'plib/src/ssgAux'):
-                command += (
-                        ' -I plib/src/ssg'
-                        )
-
-            if path.startswith( '%s/walk-generated/EmbeddedResources' % g_outdir):
-                command += (
-                        ' -I simgear'
-                        )
-            
-            #if g_openbsd and path.startswith( '%s/walk-generated/flightgear/src/GUI' % g_outdir):
-            #    command += (
-            #            #' %s' % cflags_libs5
-            #            )
-
-            if path.startswith( 'flightgear/3rdparty/flite_hts_engine'):
-                command += (
-                        ' -I flightgear/3rdparty/flite_hts_engine/flite/include'
-                        ' -I flightgear/3rdparty/flite_hts_engine/include'
-                        ' -I flightgear/3rdparty/hts_engine_API/include'
-                        ' -I flightgear/3rdparty/flite_hts_engine/flite/lang/usenglish'
-                        ' -I flightgear/3rdparty/flite_hts_engine/flite/lang/cmulex'
-                        ' -D FLITE_PLUS_HTS_ENGINE'
-                        )
-
-            if path.startswith( 'flightgear/3rdparty/hts_engine_API/lib'):
-                command += (
-                        ' -I flightgear/3rdparty/hts_engine_API/include'
-                        )
-
-
-            if path.startswith( 'simgear/simgear/canvas/ShivaVG'):
-                command += (
-                        ' -D HAVE_INTTYPES_H'
-                        )
-
-            if path.startswith( 'flightgear/src/Network/Swift'):
-                command += (''
-                        #' %s' % cflags_libs3
-                        )
-
-            if ( 0
-                    or path.startswith( 'flightgear/src/ATC/')
-                    or path.startswith( 'flightgear/src/Cockpit/')
-                    or path.startswith( 'flightgear/src/GUI/')
-                    or path.startswith( 'flightgear/src/Main/')
-                    or path.startswith( 'flightgear/src/Model/')
-                    or path.startswith( 'flightgear/src/Viewer/')
-                    ):
-                command += (
-                        ' -I %s/walk-generated/plib-include' % g_outdir
-                        )
-
+            #walk.log( 'command_cf: %s' % command_cf)
+            #walk.log( 'command:    %s' % command)
+            #assert command == command_cf, f'command_cf: {command_cf}\ncommand:    {command}'
 
             path_o += '.o'
             link_command_files.append( ' %s' % path_o)
 
-            if not link_only:
+            if not g_link_only:
                 command += ' -o %s %s' % (path_o, path)
 
                 # Tell walk to schedule running of the compile command if necessary.
@@ -1457,7 +1563,7 @@ def build( link_only=False):
                         command,
                         '%s.walk' % path_o,
                         description='Compiling to %s' % path_o,
-                        command_compare=gcc_command_compare,
+                        command_compare=cc_command_compare,
                         )
 
         # Wait for all compile commands to finish before doing the link.
@@ -1479,23 +1585,24 @@ def build( link_only=False):
         #
         system( link_command, '%s.walk' % exe, description='Linking %s' % exe)
 
-        # Create a script to run our generated executable via gdb.
+        # Create scripts to run our generated executable.
         #
-        walk.log( 'Creating gdb wrapper script for fgfs.')
-        run_fgfs_path = '%s-run-gdb.sh' % exe
-        file_write(''
-                + '#!/bin/sh\n'
-                    + ('egdb' if g_openbsd else 'gdb')
-                    + ' -ex "handle SIGPIPE noprint nostop"'
-                    + ' -ex "set print thread-events off"'
-                    + ' -ex "set print pretty on"'
-                    + ' -ex run'
-                    + f' --args  {exe} "$@"'
-                    + '\n'
-                ,
-                run_fgfs_path,
-                )
-        os.system( 'chmod u+x %s' % run_fgfs_path)
+        walk.log( 'Creating wrapper scripts for fgfs.')
+        for gdb in '', '-gdb':
+            script_path = f'{exe}-run{gdb}.sh'
+            text = '#!/bin/sh\n'
+            if g_osg_dir:
+                text += f'LD_LIBRARY_PATH={g_osg_dir}/lib64 '
+            if gdb:
+                text += 'egdb' if g_openbsd else 'gdb'
+                text += ' -ex "handle SIGPIPE noprint nostop"'
+                text += ' -ex "set print thread-events off"'
+                text += ' -ex "set print pretty on"'
+                text += ' -ex run'
+                text += f' --args '
+            text += f'{exe} "$@"\n'
+            file_write( text, script_path)
+            os.system( 'chmod u+x %s' % script_path)
         
         walk.log_prefix_set( '[100%] ')
         walk.log( 'Build finished successfully.')
@@ -1548,13 +1655,19 @@ def main():
     global g_clang
     global g_compositor
     global g_concurrency
+    global g_flags_all
     global g_force
-    global g_outdir
-    global g_verbose
+    global g_link_only
     global g_max_load_average
     global g_osg_dir
+    global g_outdir
+    global g_verbose
+    
+    do_build = False
     
     args = Args( sys.argv[1:])
+    if not args.argv:
+        args =  Args( '-j 3 -b'.split())
     
     while 1:
         try: arg = args.next()
@@ -1564,13 +1677,7 @@ def main():
             pass
         
         elif arg == '-b' or arg == '--build':
-            build()
-        
-        elif arg == '-l':
-            g_max_load_average = float( args.next())
-        
-        elif arg == '--link-only':
-            build( link_only=True)
+            do_build = True
         
         elif arg == '--clang':
             g_clang = int( args.next())
@@ -1579,7 +1686,10 @@ def main():
             g_compositor = int( args.next())
         
         elif arg == '--debug':
-            g_debug = int( args.next())
+            g_build_debug = int( args.next())
+        
+        elif arg == '--flags-all':
+            g_flags_all = int( args.next())
         
         elif arg == '--force':
             force = args.next()
@@ -1595,26 +1705,39 @@ def main():
             g_concurrency = abs(int( args.next()))
             assert g_concurrency >= 0
         
+        elif arg == '-l':
+            g_max_load_average = float( args.next())
+        
+        elif arg == '--link-only':
+            build( g_link_only=True)
+        
+        elif arg == '--new':
+            path = args.next()
+            walk.mtime_cache_mark_new( path)
+        
         elif arg == '--old':
             walk.mtime_cache_mark_old( path)
         
+        elif arg == '--optimise':
+            g_build_optimise = int( args.next())
+        
         elif arg == '--osg':
             g_osg_dir = args.next()
-        
-        elif arg == '--optimise':
-            g_optimise = int( args.next())
         
         elif arg == '--out-dir' or arg == '-o':
             g_outdir = args.next()
         
         elif arg == '--show':
-            print( 'compositor:     %s' % g_compositor)
-            print( 'concurrency:    %s' % g_concurrency)
-            print( 'debug:          %s' % g_build_debug)
-            print( 'force:          %s' % ('default' if g_force is None else g_force))
-            print( 'optimise:       %s' % g_build_optimise)
-            print( 'outdir:         %s' % g_outdir)
-            print( 'verbose:        %s' % walk.get_verbose( g_verbose))
+            print( 'compositor:         %s' % g_compositor)
+            print( 'concurrency:        %s' % g_concurrency)
+            print( 'debug:              %s' % g_build_debug)
+            print( 'force:              %s' % ('default' if g_force is None else g_force))
+            print( 'clang:              %s' % g_clang)
+            print( 'max_load_average:   %s' % g_max_load_average)
+            print( 'optimise:           %s' % g_build_optimise)
+            print( 'osg:                %s' % g_osg_dir)
+            print( 'outdir:             %s' % g_outdir)
+            print( 'verbose:            %s' % walk.get_verbose( g_verbose))
         
         elif arg == '--verbose' or arg == '-v':
             v = args.next()
@@ -1630,13 +1753,12 @@ def main():
             else:
                 g_verbose = v
         
-        elif arg == '--new':
-            path = args.next()
-            walk.mtime_cache_mark_new( path)
-        
         else:
             raise Exception( 'Unrecognised arg: %s' % arg)
-        
+    
+    if do_build:
+        build()
+
 
 if __name__ == '__main__':
     main()
