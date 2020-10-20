@@ -30,6 +30,29 @@ A build system for flightgear: walkfg.py.
     which commands are run, so for example we could choose to compile newer
     source files first, which often finds compilation errors more quickly.
 
+
+### Example building of Flightgear from scratch:
+
+    # Get Flightgear code:
+    #
+    git clone https://git.code.sf.net/p/flightgear/flightgear
+    git clone https://git.code.sf.net/p/flightgear/simgear
+    git clone https://git.code.sf.net/p/flightgear/fgdata
+    git clone https://git.code.sf.net/p/libplib/code plib
+    
+    # Get Walk build system:
+    #
+    git clone https://git.code.sf.net/p/walk/walk
+    
+    # Build Flightgear:
+    #
+    ./walk/walkfg.py
+    
+    # Run Flightgear:
+    #
+    ./build-walk/fgfs.exe-run.sh
+
+
 ### How it works:
 
     The first time we run a command, we create a file <walk_file> which
