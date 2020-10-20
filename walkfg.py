@@ -16,17 +16,24 @@ Usage:
     Each of these will typically be a git checkout.
     
     In this directory, run this script (wherever it happens to be).    
-        .../walkfg.py -b
+        .../walkfg.py
     
     All generated files will be in a new directory:    
         build-walk/
         
-    The generated executable will be called:    
-        build-walk/fgfs,debug,opt.exe
+    The generated executable and wrapper scripts include information in their
+    names to distinguish different builds:
+        build-walk/fgfs,<flags>.exe
+        build-walk/fgfs,<flags>.exe-run.sh
+        build-walk/fgfs,<flags>.exe-run-gdb.sh
     
-    It can be run with any of these commands:    
-        ./build-walk/fgfs,debug,opt.exe
-        ./build-walk/fgfs,debug,opt.exe-run-gdb.sh
+    For convenience we generate soft-links to the most recent build:
+        build-walk/fgfs.exe
+        build-walk/fgfs.exe-run.sh
+        build-walk/fgfs.exe-run-gdb.sh
+        
+    So for example Flightgear can be run with:
+        build-walk/fgfs.exe-run.sh --aircraft=... --airport=... ...
 
 
 Args:
@@ -1253,6 +1260,7 @@ def build():
                     system(
                             '%s %s -o %s' % (moc, i, cpp_file),
                             '%s.walk' % cpp_file,
+                            'Running moc on %s' % i,
                             )
                     src_fgfs.append( cpp_file)
             elif ext in ('.cpp', '.cxx'):
@@ -1265,6 +1273,7 @@ def build():
                     system(
                             '%s %s -o %s' % (moc, i, moc_file),
                             '%s.walk' % moc_file,
+                            'Running moc on %s' % i,
                             )
     timings.end( 'moc')
 
@@ -1455,6 +1464,7 @@ def build():
                         % g_outdir
                         ,
                 '%s/walk-generated/flightgear/src/GUI/qrc_resources.cpp.walk' % g_outdir,
+                'Running rcc on flightgear/src/GUI/resources.qrc',
                 )
     else:
         system(
@@ -1465,6 +1475,7 @@ def build():
                         % g_outdir
                         ,
                 '%s/walk-generated/flightgear/src/GUI/qrc_resources.cpp.walk' % g_outdir,
+                'Running rcc on flightgear/src/GUI/resources.qrc',
                 )
     src_fgfs.append( '%s/walk-generated/flightgear/src/GUI/qrc_resources.cpp' % g_outdir)
 
@@ -1476,6 +1487,7 @@ def build():
                     ' flightgear/src/GUI/InstallSceneryDialog.ui' % (uic, g_outdir)
                     ,
             '%s/walk-generated/Include/ui_InstallSceneryDialog.h.walk' % g_outdir,
+            'Running uic on flightgear/src/GUI/InstallSceneryDialog.ui',
             )
 
     e = system(
@@ -1483,6 +1495,7 @@ def build():
                     ' flightgear/src/GUI/SetupRootDialog.ui' % (uic, g_outdir)
                     ,
             '%s/walk-generated/ui_SetupRootDialog.h.walk' % g_outdir,
+            'Running uic on flightgear/src/GUI/SetupRootDialog.ui',
             )
     timings.end( 'rcc/uic')
 
@@ -1803,6 +1816,19 @@ def build():
             text += f'{exe} "$@"\n'
             file_write( text, script_path)
             os.system( 'chmod u+x %s' % script_path)
+        
+        # Make softlinks to most recent build called:
+        #
+        #   {g_outdir}/fgfs.exe
+        #   {g_outdir}/fgfs-run.exe
+        #   {g_outdir}/fgfs-run-gdb.exe
+        #
+        exe_leaf = os.path.basename(exe)
+        os.system( f'cd {g_outdir} && ln -sf {exe_leaf}            fgfs.exe')
+        os.system( f'cd {g_outdir} && ln -sf {exe_leaf}-run.sh     fgfs.exe-run.sh')
+        os.system( f'cd {g_outdir} && ln -sf {exe_leaf}-run-gdb.sh fgfs.exe-run-gdb.sh')
+            
+            
         
         walk.log_prefix_set( '[100%] ')
         walk.log( 'Build finished successfully.')
