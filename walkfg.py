@@ -64,6 +64,9 @@ Args:
         
         If default, commands are run only if necessary.
     
+    --gperf 0 | 1
+        If 1, build with support for google perf.
+    
     -h
     --help
         Show help.
@@ -91,8 +94,32 @@ Args:
         Use local OSG install instead of system OSG.
         
         For example:
-            (cd openscenegraph; mkdir build; cd build; cmake -DCMAKE_INSTALL_PREFIX=`pwd`/install -DCMAKE_BUILD_TYPE=Debug ..; time make -j 4; make install)
+            (cd openscenegraph && mkdir build && cd build && cmake -DCMAKE_INSTALL_PREFIX=`pwd`/install -DCMAKE_BUILD_TYPE=RelWithDebInfo .. && time make -j 3 && make install)
             .../walkfg.py --osg openscenegraph/build/install -b
+            
+            time (true \
+                    && cd openscenegraph \
+                    && git checkout OpenSceneGraph-3.6 \
+                    && (rm -r build-3.6.5 || true) \
+                    && mkdir build-3.6.5 \
+                    && cd build-3.6.5 \
+                    && cmake -DCMAKE_INSTALL_PREFIX=`pwd`/install -DCMAKE_BUILD_TYPE=RelWithDebInfo .. \
+                    && time make -j 3 \
+                    && make install \
+                    && cd ../../ \
+                    && ../todo/walkfg.py --osg openscenegraph/build-3.6.5/install -b \
+                    ) 2>&1|tee out
+    
+            time (true \
+                    && cd openscenegraph \
+                    && (rm -r build-3.6.5-relwithdebinfo || true) \
+                    && mkdir build-3.6.5-relwithdebinfo \
+                    && cd build-3.6.5-relwithdebinfo \
+                    && cmake -DCMAKE_INSTALL_PREFIX=`pwd`/install -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O2 -g -DNDEBUG" -DCMAKE_CC_FLAGS_RELWITHDEBINFO="-O2 -g -DNDEBUG" -DCMAKE_BUILD_TYPE=RelWithDebInfo .. \
+                    && VERBOSE=1 make -j 3 \
+                    && VERBOSE=1 make install \
+                    ) 2>&1|tee out
+                    ../todo/walkfg.py --osg openscenegraph/build-3.6.5-relwithdebinfo/install -b
     
     -o <directory>
     --out-dir <directory>
@@ -102,6 +129,9 @@ Args:
     
     --show
         Show settings.
+    
+    -t
+        Show detailed timing information at end.
     
     -v
     --verbose [+-fFdDrRcCe]
@@ -213,11 +243,13 @@ g_compositor = 1
 g_concurrency = 3
 g_flags_all = False
 g_force = None
+g_link_only = False
 g_max_load_average = 6
 g_osg_dir = None
 g_outdir = 'build-walk'
+g_gperf = None
+g_timings = False
 g_verbose = 'der'
-g_link_only = False
 
 g_os = os.uname()[0]
 g_openbsd = (g_os == 'OpenBSD')
@@ -649,6 +681,10 @@ g_compositor_prefixes = (
 def make_compile_flags( libs_cflags, cpp_feature_defines):
     '''
     Returns a CompileFlags instance set up for building Flightgear.
+    
+    (libs_cflags, cpp_feature_defines) are particular pre-defined flags that
+    our caller passes to us that have been found by running config tests and/or
+    pkg-add.
     '''     
     cf = CompileFlags()
 
@@ -893,7 +929,8 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
 
     cf.add( 'flightgear/src/Instrumentation/HUD/',
             ' -I flightgear/3rdparty/fonts'
-            ' -I %s/walk-generated/plib-include' % g_outdir
+            f' -I {g_outdir}/walk-generated/plib-include'
+            f' -I {g_outdir}/walk-generated/plib-include/plib'
             )
 
 
@@ -904,6 +941,7 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
 
     cf.add( 'flightgear/src/Main/',
             ' -I flightgear'
+            f' -I {g_outdir}/walk-generated/Include'
             ' -D HAVE_CONFIG_H'
             )
 
@@ -917,6 +955,7 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
 
     cf.add('flightgear/src/Network',
             ' -I flightgear'
+            f' -I {g_outdir}/walk-generated/Include'
             )
 
     cf.add( 'flightgear/src/Scripting/',
@@ -987,6 +1026,7 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
             ' -Wno-unused-function'
             ' -Wno-unused-variable'
             ' -Wno-write-strings'
+            ' -D register=' # register causes errors with clang and C++17.
             )
 
     if g_openbsd:
@@ -1029,20 +1069,141 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
             'flightgear/src/Viewer/',
             ),
             ' -I %s/walk-generated/plib-include' % g_outdir
+            + ' -I %s/walk-generated/plib-include/plib' % g_outdir
             )
     
     if g_compositor:
         cf.add( g_compositor_prefixes, ' -D ENABLE_COMPOSITOR')
     
+    if g_gperf:
+        cf.add( (
+                'flightgear/src/Main/fg_commands.cxx',
+                'src/Main/fg_scene_commands.cxx',
+                ),
+                ' -D FG_HAVE_GPERFTOOLS'
+                )
+    
     return cf
 
+
+class Timing:
+    '''
+    Internal item for Timings class.
+    '''
+    def __init__( self, name):
+        self.name = name
+        self.parent = None
+        self.children = []
+        self.t_begin = time.time()
+        self.t_end = None
+    def end( self, t):
+        assert self.t_end is None
+        self.t_end = t
+    def get( self):
+        assert self.t_end is not None
+        return self.t_end - self.t_begin
+
+class Timings:
+    '''
+    Maintains a tree of Timing items.
+    Example usage:
+        timings = Timings()
+        timings.begin('all')
+        timings.begin('init')
+        timings.begin('phase 1')
+        timings.end('init') # will also end 'phase 1'.
+        timings.begin('phase 2')
+        timings.end()   # will end everything.
+        print(timings)
+    This will create timing tree like:
+        all
+            init
+                phase 1
+            phase 2
+    '''
+    def __init__( self):
+        self.current = None # Points to most recent in-progress item.
+        self.first = None   # Points to top item.
+        self.name_max_len = 0
+    
+    def begin( self, name):
+        '''
+        Starts a new timing item as child of most recent in-progress timing
+        item.
+        '''
+        self.name_max_len = max( self.name_max_len, len(name))
+        new_timing = Timing( name)
+        
+        if self.current:
+            if self.current.t_end is None:
+                # self.current is in progress, so add new child item.
+                new_timing.parent = self.current
+                for c in self.current.children:
+                    assert c.t_end is not None
+                self.current.children.append( new_timing)
+            else:
+                # self.current is complete so create sibling.
+                assert self.current.parent
+                new_timing.parent = self.current.parent
+                new_timing.parent.children.append( new_timing)
+        else:
+            # First item.
+            self.first = new_timing
+        
+        self.current = new_timing
+    
+    def end( self, name=None):
+        '''
+        Ends currently-running timing and its parent items until we reach one
+        matching <name>.
+        '''
+        # end all until we have reached <name>.
+        t = time.time()
+        while self.current:
+            name2 = self.current.name
+            self.current.end( t)
+            self.current = self.current.parent
+            if name2 == name:
+                break
+    
+    def text( self, t, depth):
+        ret = ''
+        ret += ' ' * 4 * depth + f' {t.get():6.1f} {t.name}\n'
+        for child in t.children:
+            ret += self.text( child, depth + 1)
+        return ret
+    
+    def __str__( self):
+        ret = 'Timings (in seconds):\n'
+        ret += self.text( self.first, 0)
+        return ret
+
+if 0:
+    ts = Timings()
+    ts.add('a')
+    time.sleep(0.1)
+    ts.add('b')
+    time.sleep(0.2)
+    ts.add('c')
+    time.sleep(0.3)
+    ts.end('b')
+    ts.add('d')
+    ts.add('e')
+    time.sleep(0.1)
+    ts.end()
+    print(ts)
+    sys.exit()
 
 
 def build():
     '''
     Builds Flightgear using g_* settings.
     '''
-
+    timings = Timings()
+    
+    timings.begin( 'all')
+    
+    timings.begin( 'pre')
     if g_openbsd:
         # clang needs around 2G to compile
         # flightgear/src/Scripting/NasalCanvas.cxx.
@@ -1056,9 +1217,12 @@ def build():
             resource.setrlimit( resource.RLIMIT_DATA, (soft_new, hard))
             walk.log( f'Have changed RLIMIT_DATA from {soft} to {soft_new}')
 
+    timings.begin( 'get_files')
     all_files, src_fgfs = get_files()
+    timings.end( 'get_files')
 
     # Create patched version of plib/src/sl/slDSP.cxx.
+    timings.begin( 'plib-patch')
     path = 'plib/src/sl/slDSP.cxx'
     path_patched = path + '-patched.cxx'
     with open(path) as f:
@@ -1070,10 +1234,11 @@ def build():
     walk.file_write( text, path_patched)
     src_fgfs.remove(path)
     src_fgfs.append( path_patched)
-    
+    timings.end( 'plib-patch')
 
     # Generate .moc files. We look for files containing Q_OBJECT.
     #
+    timings.begin( 'moc')
     moc = 'moc'
     if g_openbsd:
         moc = 'moc-qt5'
@@ -1101,15 +1266,18 @@ def build():
                             '%s %s -o %s' % (moc, i, moc_file),
                             '%s.walk' % moc_file,
                             )
+    timings.end( 'moc')
 
 
     # Create flightgear's config file.
     #
+    timings.begin( 'config')
     fg_version = open('flightgear/flightgear-version').read().strip()
     root = os.path.abspath( '.')
 
-    file_write( textwrap.dedent('''
+    file_write( textwrap.dedent(f'''
             #pragma once
+            #define FLIGHTGEAR_VERSION "{fg_version}"
             #define VERSION    "%s"
             #define PKGLIBDIR  "%s/fgdata"
             #define FGSRCDIR   "%s/flightgear"
@@ -1216,9 +1384,15 @@ def build():
             '%s/walk-generated/Include/version.h' % g_outdir,
             )
 
+    git_id_text = git_id( 'flightgear').replace('"', '\\"')
+    revision = '#define REVISION "%s"\n' % git_id_text
     file_write(
-            '#define REVISION "%s"\n' % git_id( 'flightgear'),
+            revision,
             '%s/walk-generated/Include/build.h' % g_outdir,
+            )
+    file_write(
+            revision,
+            '%s/walk-generated/Include/flightgearBuildId.h' % g_outdir,
             )
 
     file_write(
@@ -1269,7 +1443,9 @@ def build():
             '#define SIMGEAR_VERSION %s\n' % simgear_version,
             '%s/walk-generated/simgear/version.h' % g_outdir,
             )
+    timings.end( 'config')
 
+    timings.begin( 'rcc/uic')
     if g_openbsd:
         system(
                 'rcc'
@@ -1308,10 +1484,12 @@ def build():
                     ,
             '%s/walk-generated/ui_SetupRootDialog.h.walk' % g_outdir,
             )
+    timings.end( 'rcc/uic')
 
     # Set up softlinks that look like a plib install - some code requires plib
     # installation header tree.
     #
+    timings.begin( 'plib-install')
     def find( root, leaf):
         for dirpath, dirnames, filenames in os.walk( root):
             if leaf in filenames:
@@ -1321,12 +1499,12 @@ def build():
     dirname = '%s/walk-generated/plib-include/plib' % g_outdir
     command = 'mkdir -p %s; cd %s' % (dirname, dirname)
     for leaf in 'pw.h pu.h sg.h netSocket.h js.h ssg.h puAux.h sl.h sm.h sl.h psl.h ul.h pw.h ssgAux.h ssgaSky.h fnt.h ssgaBillboards.h net.h ssgMSFSPalette.h ulRTTI.h puGLUT.h'.split():
-        path = find( 'plib', leaf)
+        path = find( 'plib/src', leaf)
+        #walk.log(f'plib path: {path}')
         path = os.path.abspath( path)
         command += ' && ln -sf %s %s' % (path, leaf)
     os.system( command)
-
-
+    timings.end( 'plib-install')
 
     # Set up compile/link commands.
     #
@@ -1334,15 +1512,16 @@ def build():
     gpp_base = 'c++ -std=gnu++17'
     if g_clang:
         gcc_base = 'clang -Wno-unknown-warning-option'
-        gpp_base = 'clang++ -std=c++14 -Wno-unknown-warning-option'
+        gpp_base = 'clang++ -std=c++17 -Wno-unknown-warning-option'
     gcc_base += ' -pthread -W -Wall -fPIC -Wno-unused-parameter'
     gpp_base += ' -pthread -W -Wall -fPIC -Wno-unused-parameter'
     
     # On Linux we end up with compilation errors if we use the results of the
     # feature checking below. But things seem to build ok without.
     #
-    # On OpenBSD, we need to do the feature checks, and thy appear to work.
+    # On OpenBSD, we need to do the feature checks, and the appear to work.
     #
+    timings.begin( 'feature-check')
     cpp_feature_defines = ''
     if g_openbsd:
         with open( 'simgear/CMakeModules/CheckCXXFeatures.cmake') as f:
@@ -1360,11 +1539,13 @@ def build():
                 pass
                 #walk.log( f'c++ feature: not defining {define}')
         #walk.log( f'cpp_feature_defines: {cpp_feature_defines}')
+    timings.end( 'feature-check')
 
     # Define compile/link commands. For linking, we write the .o filenames to a
     # separate file and use gcc's @<filename> to avoid the command becoming too
     # long.
     #
+    timings.begin( 'commands')
     link_command = gpp_base
     exe = '%s/fgfs' % g_outdir
 
@@ -1388,6 +1569,8 @@ def build():
 
     exe += '.exe'
 
+    # Libraries for which we call pkg-config:
+    #
     libs = (
             ' Qt5Core'
             ' Qt5Gui'
@@ -1407,7 +1590,6 @@ def build():
                 ' libcurl'
                 ' libevent'
                 ' openal'
-                ' openthreads'
                 ' speex'
                 ' speexdsp'
                 )
@@ -1423,6 +1605,49 @@ def build():
     
     link_command += ' -o %s' % exe
     
+    # Other libraries, including OSG.
+    #
+    def find1(*globs):
+        for g in globs:
+            gg = glob.glob(g)
+            if len(gg) == 1:
+                return gg[0]
+        raise Exception(f'Could not find match for {globs!r}')
+    
+    osg_libs = (
+            'osg',
+            'osgDB',
+            'osgFX',
+            'osgGA',
+            'osgParticle',
+            'osgSim',
+            'osgText',
+            'osgUtil',
+            'osgViewer',
+            'OpenThreads',
+            )
+    
+    if g_osg_dir:
+        libdir = find1(f'{g_osg_dir}/lib', f'{g_osg_dir}/lib64')
+        for l in osg_libs:
+            # Link with release-debug OSG libraries if available.
+            lib = find1(
+                    f'{libdir}/lib{l}rd.so.*.*.*',
+                    f'{libdir}/lib{l}r.so.*.*.*',
+                    f'{libdir}/lib{l}d.so.*.*.*',
+                    )
+            link_command += f' {lib}'
+    else:
+        for l in osg_libs:
+            link_command += f' -l {l}'
+    
+    if g_openbsd:
+        link_command += (
+                ' -l z'
+                ' -l ossaudio'
+                ' -l execinfo'  # for backtrace*().
+                )
+    
     if g_linux:
         link_command += (
                 ' -l asound'
@@ -1435,49 +1660,8 @@ def build():
                 ' -l GLU'
                 ' -l glut'
                 ' -l openal'
-                ' -l OpenThreads'
                 ' -l z'
                 ' -pthread'
-                )
-    
-    if g_osg_dir:
-        #link_command += f' -L {g_osg_dir}/lib64'
-        for l in (
-                'osg',
-                'osgDB',
-                'osgFX',
-                'osgGA',
-                'osgParticle',
-                'osgSim',
-                'osgText',
-                'osgUtil',
-                'osgViewer',
-                ):
-            # use 'd' to select debug build of osg?
-            ll = f'{g_osg_dir}/lib64/lib{l}d.so.*.*.*'
-            lll = glob.glob( ll)
-            assert len(lll) == 1, f'll={ll!r} lll={lll!r}'
-            lll = lll[0]
-            link_command += f' {lll}'
-        
-    if g_linux and not g_osg_dir:
-        link_command += (
-                ' -l osg'
-                ' -l osgDB'
-                ' -l osgFX'
-                ' -l osgGA'
-                ' -l osgParticle'
-                ' -l osgSim'
-                ' -l osgText'
-                ' -l osgUtil'
-                ' -l osgViewer'
-                )
-    
-    if g_openbsd:
-        link_command += (
-                ' -l z'
-                ' -l ossaudio'
-                ' -l execinfo'  # for backtrace*().
                 )
         
     link_command += ' %s' % libs_linkflags
@@ -1488,6 +1672,10 @@ def build():
     # first, which helps save time when investigating/fixing compile failures.
     #
     src_fgfs.sort( key=lambda path: -walk.mtime( path))
+    
+    timings.end( 'pre')
+    
+    timings.begin( 'compile')
     
     # Set things up so walk.py can run compile commands concurrently.
     #
@@ -1524,8 +1712,11 @@ def build():
                 command += ' -g'
                 path_o += ',debug'
             if g_build_optimise:
-                command += ' -O3 -msse2 -mfpmath=sse -ftree-vectorize -ftree-slp-vectorize'
-                path_o += ',opt'
+                if 0 and path == 'simgear/simgear/props/props.cxx':
+                    walk.log(f'*** not optimising {path}')
+                else:
+                    command += ' -O3 -msse2 -mfpmath=sse -ftree-vectorize -ftree-slp-vectorize'
+                    path_o += ',opt'
             
 
             if g_compositor:
@@ -1569,6 +1760,8 @@ def build():
         # Wait for all compile commands to finish before doing the link.
         #
         walk_concurrent.join()
+   
+        timings.end( 'compile')
         
         walk.log( 'Finished compiling.')
         
@@ -1583,7 +1776,10 @@ def build():
 
         # Tell walk to run our link command if necessary.
         #
+        timings.begin( 'link')
+        
         system( link_command, '%s.walk' % exe, description='Linking %s' % exe)
+        timings.end( 'link')
 
         # Create scripts to run our generated executable.
         #
@@ -1592,7 +1788,11 @@ def build():
             script_path = f'{exe}-run{gdb}.sh'
             text = '#!/bin/sh\n'
             if g_osg_dir:
-                text += f'LD_LIBRARY_PATH={g_osg_dir}/lib64 '
+                l = find1(
+                        f'{g_osg_dir}/lib',
+                        f'{g_osg_dir}/lib64',
+                        )
+                text += f'LD_LIBRARY_PATH={l} '
             if gdb:
                 text += 'egdb' if g_openbsd else 'gdb'
                 text += ' -ex "handle SIGPIPE noprint nostop"'
@@ -1612,6 +1812,11 @@ def build():
         # Terminate and wait for walk_concurrent's threads before we finish.
         #
         walk_concurrent.end()
+        walk.log_prefix_set('')
+        
+        if g_timings:
+            timings.end()
+            walk.log( f'{timings}')
 
 
 class Args:
@@ -1661,13 +1866,15 @@ def main():
     global g_max_load_average
     global g_osg_dir
     global g_outdir
+    global g_gperf
+    global g_timings
     global g_verbose
     
     do_build = False
     
     args = Args( sys.argv[1:])
     if not args.argv:
-        args =  Args( '-j 3 -b'.split())
+        args =  Args( '-j 3 -t -b'.split())
     
     while 1:
         try: arg = args.next()
@@ -1697,6 +1904,9 @@ def main():
                 g_force = None
             else:
                 g_force = int( force)
+        
+        elif arg == '--gperf':
+            g_gperf = int( args.next())
         
         elif arg == '-h' or arg == '--help':
             print( __doc__)
@@ -1739,6 +1949,9 @@ def main():
             print( 'outdir:             %s' % g_outdir)
             print( 'verbose:            %s' % walk.get_verbose( g_verbose))
         
+        elif arg == '-t':
+            g_timings = True
+        
         elif arg == '--verbose' or arg == '-v':
             v = args.next()
             if v.startswith( '+') or v.startswith( '-'):
@@ -1758,6 +1971,163 @@ def main():
     
     if do_build:
         build()
+
+
+def exception_info( exception=None, limit=None, out=None, prefix='', oneline=False):
+    '''
+    General replacement for traceback.* functions that print/return information
+    about exceptions. This function provides a simple way of getting the
+    functionality provided by these traceback functions:
+
+        traceback.format_exc()
+        traceback.format_exception()
+        traceback.print_exc()
+        traceback.print_exception()
+
+    Returns:
+        A string containing description of specified exception and backtrace.
+
+    Inclusion of outer frames:
+        We improve upon traceback.* in that we also include stack frames above
+        the point at which an exception was caught - frames from the top-level
+        <module> or thread creation fn to the try..catch block, which makes
+        backtraces much more useful.
+
+        Google 'sys.exc_info backtrace incomplete' for more details.
+
+        We deliberately leave a slightly curious pair of items in the backtrace
+        - the point in the try: block that ended up raising an exception, and
+        the point in the associated except: block from which we were called.
+
+        For clarity, we insert an empty frame in-between these two items, so
+        that one can easily distinguish the two parts of the backtrace.
+
+        So the backtrace looks like this:
+
+            root (e.g. <module> or /usr/lib/python2.7/threading.py:778:__bootstrap():
+            ...
+            file:line in the except: block where the exception was caught.
+            ::(): marker
+            file:line in the try: block.
+            ...
+            file:line where the exception was raised.
+
+        The items after the ::(): marker are the usual items that traceback.*
+        shows for an exception.
+
+    Also the backtraces that are generated are more concise than those provided
+    by traceback.* - just one line per frame instead of two - and filenames are
+    output relative to the current directory if applicatble. And one can easily
+    prefix all lines with a specified string, e.g. to indent the text.
+
+    Returns a string containing backtrace and exception information, and sends
+    returned string to <out> if specified.
+
+    exception:
+        None, or a (type, value, traceback) tuple, e.g. from sys.exc_info(). If
+        None, we call sys.exc_info() and use its return value.
+    limit:
+        None or maximum number of stackframes to output.
+    out:
+        None or callable taking single <text> parameter or object with a
+        'write' member that takes a single <text> parameter.
+    prefix:
+        Used to prefix all lines of text.
+    '''
+    if exception is None:
+        exception = sys.exc_info()
+    etype, value, tb = exception
+
+    if sys.version_info[0] == 2:
+        out2 = io.BytesIO()
+    else:
+        out2 = io.StringIO()
+    try:
+
+        frames = []
+
+        # Get frames above point at which exception was caught - frames
+        # starting at top-level <module> or thread creation fn, and ending
+        # at the point in the catch: block from which we were called.
+        #
+        # These frames are not included explicitly in sys.exc_info()[2] and are
+        # also omitted by traceback.* functions, which makes for incomplete
+        # backtraces that miss much useful information.
+        #
+        for f in reversed(inspect.getouterframes(tb.tb_frame)):
+            ff = f[1], f[2], f[3], f[4][0].strip()
+            frames.append(ff)
+
+        if 1:
+            # It's useful to see boundary between upper and lower frames.
+            frames.append( None)
+
+        # Append frames from point in the try: block that caused the exception
+        # to be raised, to the point at which the exception was thrown.
+        #
+        # [One can get similar information using traceback.extract_tb(tb):
+        #   for f in traceback.extract_tb(tb):
+        #       frames.append(f)
+        # ]
+        for f in inspect.getinnerframes(tb):
+            ff = f[1], f[2], f[3], f[4][0].strip()
+            frames.append(ff)
+
+        cwd = os.getcwd() + os.sep
+        if oneline:
+            if etype and value:
+                # The 'exception_text' variable below will usually be assigned
+                # something like '<ExceptionType>: <ExceptionValue>', unless
+                # there was no explanatory text provided (e.g. "raise Exception()").
+                # In this case, str(value) will evaluate to ''.
+                exception_text = traceback.format_exception_only(etype, value)[0].strip()
+                filename, line, fnname, text = frames[-1]
+                if filename.startswith(cwd):
+                    filename = filename[len(cwd):]
+                if not str(value):
+                    # The exception doesn't have any useful explanatory text
+                    # (for example, maybe it was raised by an expression like
+                    # "assert <expression>" without a subsequent comma).  In
+                    # the absence of anything more helpful, print the code that
+                    # raised the exception.
+                    exception_text += ' (%s)' % text
+                line = '%s%s at %s:%s:%s()' % (prefix, exception_text, filename, line, fnname)
+                out2.write(line)
+        else:
+            out2.write( '%sBacktrace:\n' % prefix)
+            for frame in frames:
+                if frame is None:
+                    out2.write( '%s    ^except raise:\n' % prefix)
+                    continue
+                filename, line, fnname, text = frame
+                if filename.startswith( cwd):
+                    filename = filename[ len(cwd):]
+                if filename.startswith( './'):
+                    filename = filename[ 2:]
+                out2.write( '%s    %s:%s:%s(): %s\n' % (
+                        prefix, filename, line, fnname, text))
+
+            if etype and value:
+                out2.write( '%sException:\n' % prefix)
+                lines = traceback.format_exception_only( etype, value)
+                for line in lines:
+                    out2.write( '%s    %s' % ( prefix, line))
+
+        text = out2.getvalue()
+
+        # Write text to <out> if specified.
+        out = getattr( out, 'write', out)
+        if callable( out):
+            out( text)
+        return text
+
+    finally:
+        # clear things to avoid cycles.
+        exception = None
+        etype = None
+        value = None
+        tb = None
+        frames = None
 
 
 if __name__ == '__main__':
