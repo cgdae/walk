@@ -126,6 +126,41 @@ Implementation details:
     profilng) but tracing syscalls could be more reliable.
 
 
+Future:
+
+    Automatic concurrency:
+    
+        It might be possible to use the information in walk files to do
+        automatic command ordering: look at existing build files to find
+        dependency information between commands (i.e. find commands whose
+        output files are read by other commands) and run commands in the right
+        order without the caller specify anything other than an unordered list
+        of commands.
+
+        And we could also do automatic concurrency - run multiple commands
+        concurrently when they are known to not depend on each otheer.
+
+        Dependency information in walk files is not available the first time
+        a build is run, and might be incorrect if a command has changed, so
+        we'd always have to re-scan walk files after commands have completed
+        and re-run commands if necessary. But most of the time this wouldn't
+        necessary.
+    
+    Automatic selection of source files:
+    
+        A log of the script for building Flightgear is for selecting the source
+        files to compile and link together.
+
+        It might be possible to write code that extracts unresolved and defined
+        symbols after each compilation and saves to a separate file next to the
+        .walk file. Then one could tell the script to compile the file that
+        contains main() and have it automatically look for other files that
+        implement the unresolved symbols.
+
+        We would need help to resolve situations where more than one file
+        implements the same symbol.
+
+
 License:
 
     Copyright 2020 Julian Smith.
@@ -209,7 +244,7 @@ def mtime( path, default=None):
         # Not in cache.
         try:
             t = os.path.getmtime( path)
-        except OSError:
+        except Exception:
             t = default
         _mtime_cache[ path] = t
     return t
@@ -1794,8 +1829,9 @@ def _process_preload( command, walk_path0, t_begin, t_end):
     
     return walk
 
+import threading
 _make_preload_up_to_date = False
-
+_make_preload_lock = threading.Lock()
 
 def _make_preload( walk_file):
     '''
@@ -1808,18 +1844,20 @@ def _make_preload( walk_file):
     path_lib = '/tmp/walk_preload.so'
     
     if not _make_preload_up_to_date:
-        file_write( _preload_c, path_c)
-        if mtime( path_c, 0) > mtime( path_lib, 0):
-            ldl = '-ldl' if _osname == 'Linux' else ''
-            command = 'gcc -g -W -Wall -shared -fPIC %s -o %s %s' % (
-                    ldl,
-                    path_lib,
-                    path_c,
-                    )
-            #log( 'building preload library with: %s' % command)
-            e = os.system( command)
-            assert not e, 'Failed to build preload library.'
-        _make_preload_up_to_date = True
+        with _make_preload_lock:
+            if not _make_preload_up_to_date:
+                file_write( _preload_c, path_c)
+                if mtime( path_c, 0) > mtime( path_lib, 0):
+                    ldl = '-ldl' if _osname == 'Linux' else ''
+                    command = 'gcc -g -W -Wall -shared -fPIC %s -o %s %s' % (
+                            ldl,
+                            path_lib,
+                            path_c,
+                            )
+                    #log( 'building preload library with: %s' % command)
+                    e = os.system( command)
+                    assert not e, 'Failed to build preload library.'
+                _make_preload_up_to_date = True
     
     return 'LD_PRELOAD=%s WALK_preload_out=%s' % (path_lib, walk_file)
 
