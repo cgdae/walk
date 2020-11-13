@@ -31,7 +31,9 @@ A build system for flightgear: walkfg.py.
     source files first, which often finds compilation errors more quickly.
 
 
-### Example building of Flightgear from scratch:
+### Example building of Flightgear (next branch) from scratch:
+
+    Install packages such as qtbase5-dev, openscenegraph etc.
 
     # Get Flightgear code:
     #
