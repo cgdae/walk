@@ -3,7 +3,14 @@
 r'''Build script for Flightgear on Unix systems.
 
 Status:
-    As of 2020-07-05 we can build on Linux Devuan Beowulf and OpenBSD 6.7.
+    As of 2020-10-28:
+        We can build on Linux Devuan Beowulf and OpenBSD 6.8.
+        
+        ENABLE_QT does not work on OpenBSD, but this appears to be a problem
+        for OpenBSD, not walkfg.py. We can get it to build by setting
+        Qt5_DIR=/usr/local/lib/qt5/cmake/Qt5, but we then get a crash at
+        runtime. The crash at runtime also happens with download_and_compile.sh
+        if we omit the -DENABLE_QT=OFF special-case.]
 
 
 Usage:
@@ -500,6 +507,7 @@ def get_files():
             'simgear/simgear/sound/soundmgr_test.cxx',
             'simgear/simgear/std/integer_sequence_test.cxx',
             'simgear/simgear/std/type_traits_test.cxx',
+            'simgear/simgear/structure/SGAction.cxx',
             'simgear/simgear/structure/expression_test.cxx',
             'simgear/simgear/structure/function_list_test.cxx',
             'simgear/simgear/structure/intern.cxx',
@@ -722,6 +730,11 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
                     ' -Wno-inconsistent-missing-override'
                     ' -Wno-overloaded-virtual'
                     ' -Wno-macro-redefined'
+                )
+        cf.add(
+                '',
+                ' -Wno-deprecated-copy'
+                ' -Wno-implicit-int-float-conversion'   # osg-3.6's template<class ValueType> struct range
                 )
     
     cf.add( (
@@ -1282,11 +1295,14 @@ def build():
     #
     timings.begin( 'config')
     fg_version = open('flightgear/flightgear-version').read().strip()
+    fg_version_major, fg_version_minor, fg_version_tail = fg_version.split('.')
     root = os.path.abspath( '.')
 
     file_write( textwrap.dedent(f'''
             #pragma once
             #define FLIGHTGEAR_VERSION "{fg_version}"
+            #define FLIGHTGEAR_MAJOR_VERSION "{fg_version_major}"
+            #define FLIGHTGEAR_MINOR_VERSION "{fg_version_minor}"
             #define VERSION    "%s"
             #define PKGLIBDIR  "%s/fgdata"
             #define FGSRCDIR   "%s/flightgear"
@@ -1628,16 +1644,17 @@ def build():
         raise Exception(f'Could not find match for {globs!r}')
     
     osg_libs = (
+            'OpenThreads',
             'osg',
             'osgDB',
             'osgFX',
             'osgGA',
             'osgParticle',
             'osgSim',
+            'osgTerrain',
             'osgText',
             'osgUtil',
             'osgViewer',
-            'OpenThreads',
             )
     
     if g_osg_dir:
@@ -1940,6 +1957,14 @@ def main():
         elif arg == '-j':
             g_concurrency = abs(int( args.next()))
             assert g_concurrency >= 0
+        
+        elif arg == '--js':
+            args.argv += [
+                    '--osg',
+                    'openscenegraph/build-3.6.5-relwithdebinfo/install',
+                    '-t',
+                    '-b',
+                    ]
         
         elif arg == '-l':
             g_max_load_average = float( args.next())
