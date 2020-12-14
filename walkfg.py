@@ -56,9 +56,6 @@ Args:
         
         Default is 0.
     
-    --compositor 0 | 1
-        If 1 (the default), we build with compositor.
-    
     --debug 0 | 1
         If 1 (default), we compile and link with -g to include debug symbols.
     
@@ -253,7 +250,6 @@ import walk
 g_build_debug = 1
 g_build_optimise = 1
 g_clang = False
-g_compositor = 1
 g_concurrency = 3
 g_flags_all = False
 g_force = None
@@ -264,6 +260,7 @@ g_outdir = 'build-walk'
 g_gperf = None
 g_timings = False
 g_verbose = 'der'
+g_test_suite = False
 
 g_os = os.uname()[0]
 g_openbsd = (g_os == 'OpenBSD')
@@ -358,7 +355,6 @@ def get_files():
     '''
     exclude_patterns = [
             'flightgear/3rdparty/cjson/test.c',
-            'flightgear/3rdparty/cppunit/*',
             'flightgear/3rdparty/flite_hts_engine/bin/flite_hts_engine.c',
             'flightgear/3rdparty/flite_hts_engine/flite/lang/cmulex/cmu_lex_data_raw.c',
             'flightgear/3rdparty/flite_hts_engine/flite/lang/cmulex/cmu_lex_entries_huff_table.c',
@@ -417,7 +413,7 @@ def get_files():
             'flightgear/src/Network/HLA/hla.cxx',
             'flightgear/src/Scripting/ClipboardFallback.cxx',
             'flightgear/src/Scripting/ClipboardWindows.cxx',
-            'flightgear/test_suite/*',
+            'flightgear/src/Viewer/renderingpipeline.cxx',
             'flightgear/utils/*',
             'plib/demos/*',
             'plib/examples/*',
@@ -529,6 +525,7 @@ def get_files():
                 'flightgear/src/Input/FGLinuxEventInput.cxx',
                 #'plib/*',
                 'flightgear/src/Input/FGHIDEventInput.cxx',
+                'flightgear/test_suite/unit_tests/Input/*',
                 ]
     else:
         exclude_patterns += [
@@ -536,18 +533,20 @@ def get_files():
                 'flightgear/3rdparty/joystick/jsNone.cxx',
                 ]
     
-    if g_compositor:
+    if g_test_suite:
         exclude_patterns += [
-                'flightgear/src/Viewer/CameraGroup_legacy.cxx',
-                'flightgear/src/Viewer/renderer_legacy.cxx',
-                'flightgear/src/Viewer/renderingpipeline.cxx',
+                'flightgear/src/Main/bootstrap.cxx',
+                'flightgear/test_suite/system_tests/Instrumentation/testgps.cxx',
+                'flightgear/test_suite/system_tests/Navaids/testnavs.cxx',
+                'flightgear/test_suite/attic/*',
+                'flightgear/3rdparty/cppunit/src/cppunit/DllMain.cpp',
+                'flightgear/3rdparty/cppunit/src/cppunit/Win32DynamicLibraryManager.cpp',
                 ]
     else:
         exclude_patterns += [
-                'flightgear/src/Viewer/CameraGroup_compositor.cxx',
-                'flightgear/src/Viewer/renderer_compositor.cxx',
+                'flightgear/test_suite/*',
+                'flightgear/3rdparty/cppunit/*',
                 ]
-
     
     # It's important to sort exclude_patterns because we rely on ordering to
     # short-cut the searches we do below.
@@ -680,18 +679,6 @@ class CompileFlags:
                     
         return ret + ret_warnings
 
-
-g_compositor_prefixes = (        
-        'flightgear/src/Canvas/',
-        'flightgear/src/Scenery/',
-        'flightgear/src/GUI/',
-        'flightgear/src/Main/',
-        'flightgear/src/Viewer/',
-        'flightgear/src/Time/',
-        'flightgear/src/Cockpit/',
-        'flightgear/src/Network/',
-        'flightgear/src/Environment/',
-        )
 
 def make_compile_flags( libs_cflags, cpp_feature_defines):
     '''
@@ -1092,9 +1079,6 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
             + ' -I %s/walk-generated/plib-include/plib' % g_outdir
             )
     
-    if g_compositor:
-        cf.add( g_compositor_prefixes, ' -D ENABLE_COMPOSITOR')
-    
     if g_gperf:
         cf.add( (
                 'flightgear/src/Main/fg_commands.cxx',
@@ -1102,6 +1086,26 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
                 ),
                 ' -D FG_HAVE_GPERFTOOLS'
                 )
+    
+    cf.add( (
+            'flightgear/test_suite/',
+            ),
+            ' -I flightgear/3rdparty/cppunit/include'
+            ' -I flightgear'
+            )
+    cf.add( (
+            'flightgear/test_suite/system_tests/FDM',
+            'flightgear/test_suite/simgear_tests/math',
+            ),
+            ' -I flightgear/src/FDM/JSBSim'
+            f' -I {g_outdir}/walk-generated/plib-include'
+            )
+    
+    cf.add( (
+            'flightgear/3rdparty/cppunit/'
+            ),
+            ' -I flightgear/3rdparty/cppunit/include'
+            )
     
     return cf
 
@@ -1291,7 +1295,7 @@ def build():
     timings.end( 'moc')
 
 
-    # Create flightgear's config file.
+    # Create flightgear's config.h file.
     #
     timings.begin( 'config')
     fg_version = open('flightgear/flightgear-version').read().strip()
@@ -1371,8 +1375,6 @@ def build():
             // Seems to need fgdata at build time?
             //#define HAVE_QRC_TRANSLATIONS
 
-            /* #undef ENABLE_COMPOSITOR */
-
             #define ENABLE_SWIFT
 
             /* #undef HAVE_SENTRY */
@@ -1388,7 +1390,7 @@ def build():
             )
 
 
-    # Create simgear's config file.
+    # Create simgear's config.h file.
     #
     file_write( textwrap.dedent(
             '''
@@ -1576,7 +1578,11 @@ def build():
     #
     timings.begin( 'commands')
     link_command = gpp_base
-    exe = '%s/fgfs' % g_outdir
+    
+    if g_test_suite:
+        exe = f'{g_outdir}/fgfs-test-suite'
+    else:
+        exe = f'{g_outdir}/fgfs'
 
     if g_clang:
         exe += ',clang'
@@ -1587,9 +1593,6 @@ def build():
         exe += ',opt'
         link_command += ' -O2'
 
-    if g_compositor:
-        exe += ',compositor'
-    
     if g_osg_dir:
         exe += ',osg'
     
@@ -1714,6 +1717,8 @@ def build():
             max_load_average=g_max_load_average,
             )
     
+    cf = make_compile_flags( libs_cflags, cpp_feature_defines)
+
     try:
 
         # Compile each source file. While doing so, we also add to the final
@@ -1736,31 +1741,28 @@ def build():
 
             path_o = '%s/%s' % (g_outdir, path)
 
+            if g_test_suite:
+                path_o += ',test-suite'
+                command += ' -D BUILDING_TESTSUITE'
+            
             if g_clang:
                 path_o += ',clang'
             if g_build_debug:
                 command += ' -g'
                 path_o += ',debug'
             if g_build_optimise:
-                if 0 and path == 'simgear/simgear/props/props.cxx':
+                # Allow selected files to be compiled without optimisation to
+                # help debugging.
+                if 0 and path == 'flightgear/src/Viewer/sview.cxx':
                     walk.log(f'*** not optimising {path}')
                 else:
                     command += ' -O3 -msse2 -mfpmath=sse -ftree-vectorize -ftree-slp-vectorize'
                     path_o += ',opt'
-            
 
-            if g_compositor:
-                for prefix in g_compositor_prefixes:
-                    if path.startswith( prefix):
-                        path_o += ',compositor'
-                        break
-            
             if g_osg_dir:
                 path_o += ',osg'
                 command += f' -I {g_osg_dir}/include'
             
-            cf = make_compile_flags( libs_cflags, cpp_feature_defines)
-
             if g_flags_all:
                 path_o += ',flags-all'
                 command = command + cf.get_flags_all( path)
@@ -1901,15 +1903,15 @@ def main():
     global g_build_debug
     global g_build_optimise
     global g_clang
-    global g_compositor
     global g_concurrency
     global g_flags_all
     global g_force
+    global g_gperf
     global g_link_only
     global g_max_load_average
     global g_osg_dir
     global g_outdir
-    global g_gperf
+    global g_test_suite
     global g_timings
     global g_verbose
     
@@ -1931,9 +1933,6 @@ def main():
         
         elif arg == '--clang':
             g_clang = int( args.next())
-        
-        elif arg == '--compositor':
-            g_compositor = int( args.next())
         
         elif arg == '--debug':
             g_build_debug = int( args.next())
@@ -1958,14 +1957,6 @@ def main():
             g_concurrency = abs(int( args.next()))
             assert g_concurrency >= 0
         
-        elif arg == '--js':
-            args.argv += [
-                    '--osg',
-                    'openscenegraph/build-3.6.5-relwithdebinfo/install',
-                    '-t',
-                    '-b',
-                    ]
-        
         elif arg == '-l':
             g_max_load_average = float( args.next())
         
@@ -1989,7 +1980,6 @@ def main():
             g_outdir = args.next()
         
         elif arg == '--show':
-            print( 'compositor:         %s' % g_compositor)
             print( 'concurrency:        %s' % g_concurrency)
             print( 'debug:              %s' % g_build_debug)
             print( 'force:              %s' % ('default' if g_force is None else g_force))
@@ -2002,6 +1992,9 @@ def main():
         
         elif arg == '-t':
             g_timings = True
+        
+        elif arg == '--test-suite':
+            g_test_suite = True
         
         elif arg == '--verbose' or arg == '-v':
             v = args.next()
