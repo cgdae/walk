@@ -2051,8 +2051,8 @@ def main():
         elif arg == '--new':
             path = args.next()
             mtime_cache_mark_new( path)
-        elif arg == 'f':
-            force = int(args.next)
+        elif arg == '-f':
+            force = int(args.next())
         elif arg == '-h' or arg == '--help':
             sys.stdout.write( __doc__)
         elif arg == '-m':
