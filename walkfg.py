@@ -144,6 +144,9 @@ Args:
     -t
         Show detailed timing information at end.
     
+    --test-suite
+        Build test suite (e.g. build-walk/fgfs-test-suite.exe) not Flightgear.
+    
     -v
     --verbose [+-fFdDrRcCe]
         Set verbose flags:
@@ -257,10 +260,11 @@ g_link_only = False
 g_max_load_average = 6
 g_osg_dir = None
 g_outdir = 'build-walk'
-g_gperf = None
+g_gperf = 0
 g_timings = False
 g_verbose = 'der'
 g_test_suite = False
+g_verbose_srcs = []
 
 g_os = os.uname()[0]
 g_openbsd = (g_os == 'OpenBSD')
@@ -348,7 +352,9 @@ def git_id( directory):
 
 def get_files():
     '''
-    Returns list source files to build from.
+    Returns (all, cpp) where <all> is list of files known to git and <cpp> is
+    subset of these files that are not headers and are used to build fgfs (e.g.
+    excluding test files and header files).
     
     We find all files known to git, then prune out various files which we don't
     want to include in the build.
@@ -413,7 +419,12 @@ def get_files():
             'flightgear/src/Network/HLA/hla.cxx',
             'flightgear/src/Scripting/ClipboardFallback.cxx',
             'flightgear/src/Scripting/ClipboardWindows.cxx',
-            'flightgear/src/Viewer/renderingpipeline.cxx',
+            
+            # Things to allow legacy builds to work:
+            #'flightgear/src/Viewer/renderingpipeline.cxx',
+            'flightgear/src/Viewer/CameraGroup_compositor.cxx',
+            'flightgear/src/Viewer/renderer_compositor.cxx',
+            
             'flightgear/utils/*',
             'plib/demos/*',
             'plib/examples/*',
@@ -430,6 +441,7 @@ def get_files():
             'plib/src/js/jsWindows.cxx',
             'plib/tools/src/af2rgb/af2rgb.cxx',
             'plib/tools/src/plibconvert.cxx',
+            'simgear/3rdparty/expat/*',
             'simgear/3rdparty/udns/dnsget.c',
             'simgear/3rdparty/udns/ex-rdns.c',
             'simgear/3rdparty/udns/getopt.c',
@@ -724,6 +736,10 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
                 ' -Wno-implicit-int-float-conversion'   # osg-3.6's template<class ValueType> struct range
                 )
     
+    cf.add( 'flightgear/',
+            ' -D HAVE_CONFIG_H'
+            )
+    
     cf.add( (
             'flightgear/3rdparty/flite_hts_engine/flite/',
             'flightgear/3rdparty/hts_engine_API/lib',
@@ -889,18 +905,11 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
     cf.add( 'flightgear/src/FDM/'
             ,
             ' -I flightgear/src/FDM/JSBSim'
-            ' -D ENABLE_JSBSIM'
-            ' -D ENABLE_YASIM'
             )
 
     cf.add( 'flightgear/src/FDM/JSBSim/FGJSBBase.cpp'
             ,
             ' -D JSBSIM_VERSION="\\"compiled from FlightGear 2020.2.0\\""'
-            )
-
-    cf.add( 'flightgear/src/FDM/SP/AISim.cpp'
-            ,
-            ' -D ENABLE_SP_FDM'
             )
 
     cf.add( (
@@ -913,17 +922,9 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
             % (g_outdir, g_outdir)
             )
 
-    cf.add( (
-            'flightgear/src/Viewer/',
-            '%s/flightgear/src/Viewer/' % g_outdir,
-            ),
-            ' -D HAVE_PUI'
-            )
-
     cf.add( 'flightgear/src/Input/',
             ' -I flightgear/3rdparty/hidapi'
             ' -I flightgear/3rdparty/joystick'
-            ' -D HAVE_CONFIG_H'
             )
 
     cf.add( 'flightgear/3rdparty/fonts/',
@@ -949,7 +950,6 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
     cf.add( 'flightgear/src/Main/',
             ' -I flightgear'
             f' -I {g_outdir}/walk-generated/Include'
-            ' -D HAVE_CONFIG_H'
             )
 
     cf.add( 'flightgear/src/MultiPlayer',
@@ -963,10 +963,6 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
     cf.add('flightgear/src/Network',
             ' -I flightgear'
             f' -I {g_outdir}/walk-generated/Include'
-            )
-
-    cf.add( 'flightgear/src/Scripting/',
-            ' -D HAVE_SYS_TIME_H'
             )
 
     cf.add( 'flightgear/src/Sound',
@@ -984,7 +980,6 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
             ' -I simgear/3rdparty/udns'
             ' -I %s/walk-generated'
             ' -I %s/walk-generated/simgear'
-            ' -D HAVE_STD_INDEX_SEQUENCE' # prob not necessary.
             % (g_outdir, g_outdir)
             )
 
@@ -1079,13 +1074,15 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
             + ' -I %s/walk-generated/plib-include/plib' % g_outdir
             )
     
-    if g_gperf:
-        cf.add( (
-                'flightgear/src/Main/fg_commands.cxx',
-                'src/Main/fg_scene_commands.cxx',
-                ),
-                ' -D FG_HAVE_GPERFTOOLS'
-                )
+    # Cmake build puts FG_HAVE_GPERFTOOLS in config.h, but this requires
+    # complete rebuild if changed, so we make it specific to the code that
+    # actually refers to it.
+    cf.add( (
+            'flightgear/src/Main/fg_commands.cxx',
+            'src/Main/fg_scene_commands.cxx',
+            ),
+            f' -D FG_HAVE_GPERFTOOLS={g_gperf}'
+            )
     
     cf.add( (
             'flightgear/test_suite/',
@@ -1219,6 +1216,81 @@ if 0:
     sys.exit()
 
 
+def do_compile(walk_concurrent, gcc_base, gpp_base, cf, path):
+    '''
+    Compiles <path> if necessary. Returns (ret, path_o), where <ret> is None if
+    command was not run, or integer termination status.
+    '''
+    if path.endswith( '.c'):
+        command = gcc_base
+    else:
+        command = gpp_base
+
+    command += ' -c'
+
+    path_o = '%s/%s' % (g_outdir, path)
+
+    if g_test_suite:
+        if path in (
+                'flightgear/src/Airports/airport.cxx',
+                'flightgear/src/Main/sentryIntegration.cxx',
+                'flightgear/src/Scripting/NasalSys.cxx',
+                ):
+            path_o += ',test-suite'
+            command += ' -D BUILDING_TESTSUITE'
+
+    if g_clang:
+        path_o += ',clang'
+    if g_build_debug:
+        command += ' -g'
+        path_o += ',debug'
+    if g_build_optimise:
+        # Allow selected files to be compiled without optimisation to
+        # help debugging.
+        if path in (
+                #'simgear/simgear/props/props.cxx',
+                #'flightgear/src/Viewer/fg_os_osgviewer.cxx',
+                #'flightgear/src/Viewer/renderer.cxx',
+                ):
+            walk.log(f'*** not optimising {path}')
+        else:
+            command += ' -O3 -msse2 -mfpmath=sse -ftree-vectorize -ftree-slp-vectorize'
+            path_o += ',opt'
+
+    if g_osg_dir:
+        path_o += ',osg'
+        command += f' -I {g_osg_dir}/include'
+
+    if g_flags_all:
+        path_o += ',flags-all'
+        command = command + cf.get_flags_all( path)
+    else:
+        command = command + cf.get_flags( path)
+
+    #walk.log( 'command_cf: %s' % command_cf)
+    #walk.log( 'command:    %s' % command)
+    #assert command == command_cf, f'command_cf: {command_cf}\ncommand:    {command}'
+
+    path_o += '.o'
+
+    if not g_link_only:
+        command += ' -o %s %s' % (path_o, path)
+        if path in g_verbose_srcs:
+            walk.log(f'command is: {command}')
+
+        # Tell walk to schedule running of the compile command if necessary.
+        #
+        ret = system_concurrent(
+                walk_concurrent,
+                command,
+                '%s.walk' % path_o,
+                description='Compiling to %s' % path_o,
+                command_compare=cc_command_compare,
+                )
+    
+    return ret, path_o
+
+
 def build():
     '''
     Builds Flightgear using g_* settings.
@@ -1301,7 +1373,7 @@ def build():
     fg_version = open('flightgear/flightgear-version').read().strip()
     fg_version_major, fg_version_minor, fg_version_tail = fg_version.split('.')
     root = os.path.abspath( '.')
-
+    
     file_write( textwrap.dedent(f'''
             #pragma once
             #define FLIGHTGEAR_VERSION "{fg_version}"
@@ -1346,7 +1418,7 @@ def build():
 
             // Ensure FG_HAVE_xxx always have a value
             #define FG_HAVE_HLA ( + 0)
-            #define FG_HAVE_GPERFTOOLS ( + 0)
+            //#define FG_HAVE_GPERFTOOLS {g_gperf}
 
             /* #undef SYSTEM_SQLITE */
 
@@ -1366,7 +1438,7 @@ def build():
             #define HAVE_FTIME
             #define HAVE_GETTIMEOFDAY
 
-            #define FG_TEST_SUITE_DATA "/home/jules/flightgear/download_and_compile16/flightgear/test_suite/test_data"
+            #define FG_TEST_SUITE_DATA "{root}/flightgear/test_suite/test_data"
 
             #define FG_BUILD_TYPE "Dev"
 
@@ -1550,7 +1622,7 @@ def build():
     # On Linux we end up with compilation errors if we use the results of the
     # feature checking below. But things seem to build ok without.
     #
-    # On OpenBSD, we need to do the feature checks, and the appear to work.
+    # On OpenBSD, we need to do the feature checks, and they appear to work.
     #
     timings.begin( 'feature-check')
     cpp_feature_defines = ''
@@ -1603,6 +1675,9 @@ def build():
 
     # Libraries for which we call pkg-config:
     #
+    # On OpenBSD, qt requires -L/usr/local/lib but pkg-config Qt* doesn't
+    # provide it. However "pkg-config dbus-1" provides it.
+    #
     libs = (
             ' Qt5Core'
             ' Qt5Gui'
@@ -1612,6 +1687,8 @@ def build():
             ' dbus-1'
             ' gl'
             ' x11'
+            ' liblzma'
+            ' expat'
             )
     if not g_osg_dir:
         libs += ' openscenegraph'
@@ -1724,70 +1801,19 @@ def build():
         # Compile each source file. While doing so, we also add to the final
         # link command.
         #
-        
+        num_compiles = 0
+        num_compiles_run = 0
         progress_t = 0
         for i, path in enumerate( src_fgfs):
         
             walk.log_prefix_set( '[% 3i%%] ' % (100 * i / len(src_fgfs)))
             walk.log_ping( 'looking at: %s' % path, 10)
             #walk.log( 'looking at: %s' % path)
-
-            if path.endswith( '.c'):
-                command = gcc_base
-            else:
-                command = gpp_base
-
-            command += ' -c'
-
-            path_o = '%s/%s' % (g_outdir, path)
-
-            if g_test_suite:
-                path_o += ',test-suite'
-                command += ' -D BUILDING_TESTSUITE'
-            
-            if g_clang:
-                path_o += ',clang'
-            if g_build_debug:
-                command += ' -g'
-                path_o += ',debug'
-            if g_build_optimise:
-                # Allow selected files to be compiled without optimisation to
-                # help debugging.
-                if 0 and path == 'flightgear/src/Viewer/sview.cxx':
-                    walk.log(f'*** not optimising {path}')
-                else:
-                    command += ' -O3 -msse2 -mfpmath=sse -ftree-vectorize -ftree-slp-vectorize'
-                    path_o += ',opt'
-
-            if g_osg_dir:
-                path_o += ',osg'
-                command += f' -I {g_osg_dir}/include'
-            
-            if g_flags_all:
-                path_o += ',flags-all'
-                command = command + cf.get_flags_all( path)
-            else:
-                command = command + cf.get_flags( path)
-
-            #walk.log( 'command_cf: %s' % command_cf)
-            #walk.log( 'command:    %s' % command)
-            #assert command == command_cf, f'command_cf: {command_cf}\ncommand:    {command}'
-
-            path_o += '.o'
+            ret, path_o = do_compile(walk_concurrent, gcc_base, gpp_base, cf, path)
             link_command_files.append( ' %s' % path_o)
-
-            if not g_link_only:
-                command += ' -o %s %s' % (path_o, path)
-
-                # Tell walk to schedule running of the compile command if necessary.
-                #
-                system_concurrent(
-                        walk_concurrent,
-                        command,
-                        '%s.walk' % path_o,
-                        description='Compiling to %s' % path_o,
-                        command_compare=cc_command_compare,
-                        )
+            num_compiles += 1
+            if ret is not None:
+                num_compiles_run += 1
 
         # Wait for all compile commands to finish before doing the link.
         #
@@ -1795,7 +1821,7 @@ def build():
    
         timings.end( 'compile')
         
-        walk.log( 'Finished compiling.')
+        walk.log( f'Finished compiling. Number of compiles was {num_compiles_run}/{num_compiles}')
         
         link_command_extra_path = '%s-link-extra' % exe
         link_command_files.sort()
@@ -1828,10 +1854,13 @@ def build():
             if gdb:
                 text += 'egdb' if g_openbsd else 'gdb'
                 text += ' -ex "handle SIGPIPE noprint nostop"'
+                text += ' -ex "handle SIG32 noprint nostop"'
                 text += ' -ex "set print thread-events off"'
                 text += ' -ex "set print pretty on"'
                 text += ' -ex run'
                 text += f' --args '
+            else:
+                text += 'exec '
             text += f'{exe} "$@"\n'
             file_write( text, script_path)
             os.system( 'chmod u+x %s' % script_path)
@@ -1843,9 +1872,10 @@ def build():
         #   {g_outdir}/fgfs-run-gdb.exe
         #
         exe_leaf = os.path.basename(exe)
-        os.system( f'cd {g_outdir} && ln -sf {exe_leaf}            fgfs.exe')
-        os.system( f'cd {g_outdir} && ln -sf {exe_leaf}-run.sh     fgfs.exe-run.sh')
-        os.system( f'cd {g_outdir} && ln -sf {exe_leaf}-run-gdb.sh fgfs.exe-run-gdb.sh')
+        rhs = exe_leaf[:exe_leaf.find(',')]
+        os.system( f'cd {g_outdir} && ln -sf {exe_leaf}            {rhs}.exe')
+        os.system( f'cd {g_outdir} && ln -sf {exe_leaf}-run.sh     {rhs}.exe-run.sh')
+        os.system( f'cd {g_outdir} && ln -sf {exe_leaf}-run-gdb.sh {rhs}.exe-run-gdb.sh')
             
             
         
@@ -2009,6 +2039,10 @@ def main():
                 g_verbose = vv
             else:
                 g_verbose = v
+        
+        elif arg == '--verbose-src':
+            p = args.next()
+            g_verbose_srcs.append(p)
         
         else:
             raise Exception( 'Unrecognised arg: %s' % arg)
