@@ -300,7 +300,7 @@ def system_concurrent( walk_concurrent, command, walk_path, description=None, ve
     '''
     if verbose is None:
         verbose = g_verbose
-    walk_concurrent.system(
+    doit, reason, e = walk_concurrent.system_r(
             command,
             walk_path,
             verbose=verbose,
@@ -309,6 +309,7 @@ def system_concurrent( walk_concurrent, command, walk_path, description=None, ve
             command_compare=command_compare,
             #out_prefix='    ',
             )
+    return doit or g_force, reason, e
 
 def file_write( text, path, verbose=None):
     '''
@@ -419,6 +420,10 @@ def get_files():
             'flightgear/src/Network/HLA/hla.cxx',
             'flightgear/src/Scripting/ClipboardFallback.cxx',
             'flightgear/src/Scripting/ClipboardWindows.cxx',
+
+            # 2021-03-06 DDS is new but seems to be broken.
+            'flightgear/src/Network/DDS/*',
+            'simgear/simgear/io/SGDataDistributionService.cxx',
             
             # Things to allow legacy builds to work:
             #'flightgear/src/Viewer/renderingpipeline.cxx',
@@ -1218,8 +1223,7 @@ if 0:
 
 def do_compile(walk_concurrent, gcc_base, gpp_base, cf, path):
     '''
-    Compiles <path> if necessary. Returns (ret, path_o), where <ret> is None if
-    command was not run, or integer termination status.
+    Compiles <path> if necessary. Returns name of .o file.
     '''
     if path.endswith( '.c'):
         command = gcc_base
@@ -1232,7 +1236,7 @@ def do_compile(walk_concurrent, gcc_base, gpp_base, cf, path):
 
     if g_test_suite:
         if path in (
-                'flightgear/src/Airports/airport.cxx',
+                #'flightgear/src/Airports/airport.cxx',
                 'flightgear/src/Main/sentryIntegration.cxx',
                 'flightgear/src/Scripting/NasalSys.cxx',
                 ):
@@ -1251,6 +1255,9 @@ def do_compile(walk_concurrent, gcc_base, gpp_base, cf, path):
                 #'simgear/simgear/props/props.cxx',
                 #'flightgear/src/Viewer/fg_os_osgviewer.cxx',
                 #'flightgear/src/Viewer/renderer.cxx',
+                #'simgear/simgear/scene/model/particles.cxx',
+                #'flightgear/src/Main/options.cxx',
+                #'flightgear/src/Autopilot/pidcontroller.cxx',
                 ):
             walk.log(f'*** not optimising {path}')
         else:
@@ -1273,14 +1280,18 @@ def do_compile(walk_concurrent, gcc_base, gpp_base, cf, path):
 
     path_o += '.o'
 
-    if not g_link_only:
+    if g_link_only:
+        doit = False
+        reason = None
+        e = None
+    else:
         command += ' -o %s %s' % (path_o, path)
         if path in g_verbose_srcs:
             walk.log(f'command is: {command}')
 
         # Tell walk to schedule running of the compile command if necessary.
         #
-        ret = system_concurrent(
+        doit, reason, e = system_concurrent(
                 walk_concurrent,
                 command,
                 '%s.walk' % path_o,
@@ -1288,7 +1299,7 @@ def do_compile(walk_concurrent, gcc_base, gpp_base, cf, path):
                 command_compare=cc_command_compare,
                 )
     
-    return ret, path_o
+    return path_o, doit, reason, e
 
 
 def build():
@@ -1432,10 +1443,10 @@ def build():
             #define HAVE_QT
 
             #define HAVE_SYS_TIME_H
-            #define HAVE_SYS_TIMEB_H
+            //#define HAVE_SYS_TIMEB_H
             #define HAVE_TIMEGM
             #define HAVE_DAYLIGHT
-            #define HAVE_FTIME
+            //#define HAVE_FTIME
             #define HAVE_GETTIMEOFDAY
 
             #define FG_TEST_SUITE_DATA "{root}/flightgear/test_suite/test_data"
@@ -1745,6 +1756,7 @@ def build():
                     f'{libdir}/lib{l}rd.so.*.*.*',
                     f'{libdir}/lib{l}r.so.*.*.*',
                     f'{libdir}/lib{l}d.so.*.*.*',
+                    f'{libdir}/lib{l}.so.*.*.*',
                     )
             link_command += f' {lib}'
     else:
@@ -1802,26 +1814,46 @@ def build():
         # link command.
         #
         num_compiles = 0
-        num_compiles_run = 0
+        num_compiles_to_run = len(src_fgfs)
         progress_t = 0
         for i, path in enumerate( src_fgfs):
         
-            walk.log_prefix_set( '[% 3i%%] ' % (100 * i / len(src_fgfs)))
-            walk.log_ping( 'looking at: %s' % path, 10)
-            #walk.log( 'looking at: %s' % path)
-            ret, path_o = do_compile(walk_concurrent, gcc_base, gpp_base, cf, path)
+            def prefixfn():
+                '''
+                Returns percentage formed by blending i/len(src_fgfs) with
+                walk_concurrent.num_commands_run / num_compiles_to_run.
+                '''
+                p1 = i / len(src_fgfs)
+                if num_compiles_to_run:
+                    p2 = walk_concurrent.num_commands_run / num_compiles_to_run
+                    p = (1-p1) * p1 + p1 * p2
+                    return f'[{100*p:3.0f}% p1={100*p1:3.0f}% p2={100*p2:3.0f}% ] '
+                else:
+                    p = p1
+                return f'[{100*p:3.0f}%] '
+            walk.log_prefix_set( prefixfn)
+            
+            walk.log_ping( 'looking at: %s' % path, 4)
+            path_o, doit, reason, e = do_compile(walk_concurrent, gcc_base, gpp_base, cf, path)
+            if doit:
+                if 0:
+                    walk.log( f'scheduling compilation to: {path_o}')
+            else:
+                num_compiles_to_run -= 1
             link_command_files.append( ' %s' % path_o)
             num_compiles += 1
-            if ret is not None:
-                num_compiles_run += 1
 
         # Wait for all compile commands to finish before doing the link.
         #
+        walk.log( f'Waiting for compile tasks to complete')
+        
+        if num_compiles_to_run:
+            walk.log_prefix_set( lambda: f'[{100 * walk_concurrent.num_commands_run / num_compiles_to_run:3.0f}%] ')
         walk_concurrent.join()
-   
         timings.end( 'compile')
         
-        walk.log( f'Finished compiling. Number of compiles was {num_compiles_run}/{num_compiles}')
+        walk.log_prefix_set( '')
+        walk.log( f'Finished compiling. Number of compiles run was {walk_concurrent.num_commands_run}/{walk_concurrent.num_commands}.')
         
         link_command_extra_path = '%s-link-extra' % exe
         link_command_files.sort()
@@ -1961,9 +1993,28 @@ def main():
         elif arg == '-b' or arg == '--build':
             do_build = True
         
+        elif arg == '--check-mtime':
+            t = time.time()
+            n = 0
+            for root in ( 'flightgear', 'simgear', 'plib'):
+                for dirpath, dirnames, filenames in os.walk(root):
+                    for filename in filenames:
+                        for suffix in (
+                                '.cxx', '.c', '.cpp',
+                                '.hxx', '.h', '.hpp',
+                                ):
+                            if filename.endswith( suffix):
+                                path = os.path.join( dirpath, filename)
+                                walk.mtime( path)
+                                n += 1
+            walk.log( f'n={n} t={time.time()-t}')
         elif arg == '--clang':
             g_clang = int( args.next())
         
+        elif arg == '--convert-walk-all':
+            root = args.next()
+            walk.convert_walk_all( root)
+            
         elif arg == '--debug':
             g_build_debug = int( args.next())
         
@@ -2209,4 +2260,11 @@ def exception_info( exception=None, limit=None, out=None, prefix='', oneline=Fal
 
 
 if __name__ == '__main__':
-    main()
+    if 0:
+        import pprofile
+        prof = pprofile.StatisticalProfile()
+        with prof():
+            main()
+        prof.print_stats()
+    else:
+        main()
