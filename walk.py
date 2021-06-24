@@ -237,6 +237,7 @@ def log_ping( text, interval):
     if t - _log_last_t > interval:
         log( text)
 
+g_use_hash =  True
 _mtime_new = 3600*24*365*10*1000
 _mtime_cache = dict()
 
@@ -256,13 +257,34 @@ def mtime( path, default=None):
         _mtime_cache[ path] = t
     return t
 
+_file_hash_cache = dict()
+
+def file_hash(path):
+    '''
+    Returns hash digest of <path> or -1 if it does not exist.
+    '''
+    global _file_hash_cache
+    ret = _file_hash_cache.get(path)
+    if ret is None:
+        try:
+            with open(path, 'rb') as f:
+                contents = f.read()
+            ret = hashlib.md5(contents).digest()
+        except:
+            ret = -1 # Must be true so we can reuse as 'open for reading' flag, but != True.
+        _file_hash_cache[path] = ret
+    return ret
+
 
 def mtime_cache_clear( path=None):
     global _mtime_cache
+    global _file_hash_cache
     if path:
         _mtime_cache.pop( path, None)
+        _file_hash_cache.pop( path, None)
     else:
         _mtime_cache = dict()
+        _file_hash_cache = dict()
 
 
 def mtime_cache_mark_new( path):
@@ -497,7 +519,7 @@ def system_doit(
     if force is not None:
         doit2 = force
     if doit2:
-        # We always write a zero-length .walk file before running the command,
+        # We always write None to .walk file before running the command,
         # which can be used to detect when a command did not complete (e.g.
         # because we were killed.
         #
@@ -507,8 +529,8 @@ def system_doit(
         # or failed (zero-length .walk file).
         #
         ensure_parent_dir( walk_path)
-        with open( walk_path, 'w') as f:
-            pass
+        with open( walk_path, 'wb') as f:
+            pickle.dump( None, f)
         
         strace_path = walk_path + '-1'
         remove( strace_path)
@@ -553,6 +575,10 @@ def system_doit(
             if 'e' in verbose and 'c' not in verbose:
                 # We didn't output the command above, so output it now.
                 log( 'Command failed: %s' % command)
+            # Write error code to .walk file so next time we know the command
+            # failed.
+            with open( walk_path, 'wb') as f:
+                pickle.dump( e, f)
 
         else:
             # Command has succeeded so create the .walk file so that future
@@ -1111,6 +1137,7 @@ def system_check( walk_path, command, command_compare=None):
     '''
     reason = []
     verbose = 0
+    #verbose = walk_path.endswith('/main.cxx,clang,debug,opt,osg.o.walk')
     
     openbsd = _osname == 'OpenBSD'
     linux = _osname == 'Linux'
@@ -1119,7 +1146,8 @@ def system_check( walk_path, command, command_compare=None):
         f = open( walk_path, 'rb')
     except Exception as e:
         doit = True
-        reason.append( f'Failed to open walk file {walk_path}: {e}')
+        #reason.append( f'Failed to open walk file {walk_path}: {e}')
+        reason.append( f'No previous build')
         return doit, reason
     
     with f:
@@ -1127,15 +1155,20 @@ def system_check( walk_path, command, command_compare=None):
             w = pickle.load( f)
         except Exception as e:
             doit = True
-            reason.append( f'Failed to unpickle walk file {walk_path}: {e}')
+            #reason.append( f'Failed to unpickle walk file {walk_path}: {e}')
+            reason.append( f'Previous build interrupted')
             return doit, reason
+    if w is None or isinstance(w, int):
+        reason.append( f'Previous build failed: {w}')
+        doit = True
+        return doit, reason
         
     if command_compare:
         diff = command_compare( w.command, command)
     else:
         diff = (command != w.command)
     if diff:
-        if 1:
+        if verbose:
             log( 'command has changed:')
             log( '    from %s' % w.command)
             log( '    to   %s' % command)
@@ -1152,16 +1185,23 @@ def system_check( walk_path, command, command_compare=None):
     oldest_write_path = None
     newest_read = None
     newest_read_path = None
-
+    
+    read_hash_changed_path = None
+    read_hash_changed_mtime = 0
+    
     command_old = None
     t_begin = None
     t_end = None
 
     num_lines = 0
 
-    for path, (ret, read, write) in w.path2info.items():
+    use_mtime = False
+    
+    for path, (ret, read_or_hash, write) in w.path2info.items():
         num_lines += 1
-
+        if verbose:
+            log(f'ret={ret} read_or_hash={read_or_hash} write={write}: {path}')
+        
         # Previous invocation of command opened <path>, so we need to
         # look at its mtime and update newest_read or oldest_write
         # accordingly.
@@ -1207,10 +1247,11 @@ def system_check( walk_path, command, command_compare=None):
         # called it, we put the result into <t>.
         t = -1
 
-        if 0 and path.startswith( os.getcwd()):
-            log( 't=%s ret=%s read=%s write=%s path: %s' % (date_time(t), ret, read, write, path))
+        #if 0 and path.startswith( os.getcwd()):
+        if verbose:
+            log( 't=%s ret=%s read_or_hash=%s write=%s path: %s' % (date_time(t), ret, read_or_hash, write, path))
 
-        if read and not write and ret < 0:
+        if read_or_hash and not write and ret < 0:
             # Open for reading failed last time.
             if t == -1:
                 t = mtime( path)
@@ -1225,18 +1266,45 @@ def system_check( walk_path, command, command_compare=None):
                         ))
                 newest_read = time.time()
                 newest_read_path = path
-        if read and ret >= 0:
+        if read_or_hash and ret >= 0:
             # Open for reading succeeded last time.
-            if t == -1:
-                t = mtime( path)
-            if t:
-                if newest_read == None or t > newest_read:
-                    newest_read = t
-                    newest_read_path = path
+            if verbose:
+                log(f'opened for reading succeeded last time: {path}')
+            if g_use_hash and (isinstance(read_or_hash, bytes) or read_or_hash == -1):
+                # read_or_hash is hash digest.
+                hash_ = file_hash(path)
+                #log(f'path={path}')
+                #log(f'    read_or_hash: {read_or_hash}')
+                #log(f'    hash_:     {hash_}')
+                if hash_ != read_or_hash:
+                    #log(f'hash has changed: {path}')
+                    # Keep track of newest modified input file to include in
+                    # diagnostics.
+                    #if read_or_hash == -1:
+                    #    log(f'No previous has for: {path}')
+                    if t == -1:
+                        t = mtime( path)
+                    if t and t > read_hash_changed_mtime:
+                        read_hash_changed_mtime = t
+                        read_hash_changed_path = path
             else:
-                # File has been removed.
-                newest_read = time.time()
-                newest_read_path = path
+                # hash info not available - presumably an old .walk file.
+                use_mtime = True
+            
+            # Currently we always look at mtime even if we also use hash, but
+            # this could be 'if not g_use_hash: ...'.
+            if 1:
+                #log(f'read_or_hash not hash: {read_or_hash}')
+                if t == -1:
+                    t = mtime( path)
+                if t:
+                    if newest_read == None or t > newest_read:
+                        newest_read = t
+                        newest_read_path = path
+                else:
+                    # File has been removed.
+                    newest_read = time.time()
+                    newest_read_path = path
         if write and ret < 0:
             # Open for writing failed.
             pass
@@ -1262,32 +1330,46 @@ def system_check( walk_path, command, command_compare=None):
     doit = False
     if num_lines == 0:
         doit = True
-        reason.append( 'previous invocation failed or was interrupted')
+        reason.append( 'Previous build failed or interrupted')
     elif newest_read is None:
         doit = True
-        reason.append( 'no input files found')
+        reason.append( 'No input files found')
     elif oldest_write is None:
         doit = True
-        reason.append( 'no output files found')
-    elif newest_read > oldest_write:
+        reason.append( 'No output files found')
+    elif read_hash_changed_path:
         doit = True
-        reason.append( 'input is new: %r' % (
-                os.path.relpath( newest_read_path)
-                #oldest_write_path,
-                ))
+        reason.append( f'hash changed: {os.path.relpath(read_hash_changed_path)}')
+    elif oldest_write == 0:
+        doit = True
+        reason.append( f'Output file not present:{oldest_write_path}')
+    elif newest_read > oldest_write:
+        if g_use_hash and not use_mtime:
+            # If we get here, no hash changed was detected, so we will not be
+            # rebuilding, but we would have rebuilt if relying on mtimes.
+            reason.append( f'hash unchanged: {newest_read_path}')
+            #log(f'Ignoring newer input because hash unchanged: {newest_read_path}')
+        else:
+            doit = True
+            reason.append( 'Input is newer: %r' % (
+                    os.path.relpath( newest_read_path)
+                    #oldest_write_path,
+                    ))
     else:
         doit = False
-        reason.append( 'newest input %r not newer then oldest output %r' % (
-                os.path.relpath( newest_read_path),
-                os.path.relpath( oldest_write_path),
-                ))
+        if newest_read_path:
+            reason.append( 'Newest input %r not newer then oldest output %r' % (
+                    os.path.relpath( newest_read_path),
+                    os.path.relpath( oldest_write_path),
+                    ))
+        else:
+            reason.append( 'No input hash has changed')
 
     reason = ', '.join( reason)
 
     if verbose:
         log( f'returning {doit} {reason}')
     return doit, reason
-
 
 _osname = os.uname()[0]
 
@@ -1357,6 +1439,11 @@ class WalkFile:
         Write to pickle file.
         '''
         walk_path_ = walk_path + '-'
+        # Find md5 of input files.
+        for path, (ret, r, w) in self.path2info.items():
+            if r:
+                hash_ = file_hash(path)
+                self.path2info[path] = (ret, hash_, w)
         with open( walk_path_, 'wb') as f:
             pickle.dump( self, f)
         os.rename( walk_path_, walk_path)
@@ -2132,8 +2219,24 @@ def _do_tests(method=None):
                 os.system( f'touch {build_h}')
                 e = system( command, build_walkfile, verbose='cderR', out=log, out_prefix='    ', method=method)
                 t2 = mtime( build_exe)
+                assert e == None
+                assert t2 == t
+
+                # Check rebuild with updated header updates executable.
+                log( '== testing rebuild with modified header')
+                mtime_cache_clear()
+                os.system( f'echo >> {build_h}')
+                e = system( command, build_walkfile, verbose='cderR', out=log, out_prefix='    ', method=method)
+                t2 = mtime( build_exe)
                 assert e == 0
                 assert t2 > t
+
+                log( '')
+                log( f'== running command after removing {build_exe}')
+                mtime_cache_clear()
+                os.system(f'rm {build_exe}')
+                e = system( command, build_walkfile, verbose='derR', out_prefix='    ', method=method)
+                assert e == 0, f'e={e}'
 
             with LogPrefixScope( 'rename: '):
             
@@ -2177,6 +2280,14 @@ def _do_tests(method=None):
                 log( f'== running command after touching {a}')
                 mtime_cache_clear()
                 e = os.system( f'touch {a}')
+                e = system( command, w, verbose='derR', out_prefix='    ', method=method)
+                #os.system( 'ls -lt|head')
+                assert e is None, f'e={e}'
+
+                log( '')
+                log( f'== running command after touching {a}')
+                mtime_cache_clear()
+                e = os.system( f'echo >> {a}')
                 e = system( command, w, verbose='derR', out_prefix='    ', method=method)
                 #os.system( 'ls -lt|head')
                 assert e == 0, f'e={e}'
