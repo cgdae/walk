@@ -2,17 +2,6 @@
 
 r'''Build script for Flightgear on Unix systems.
 
-Status:
-    As of 2020-10-28:
-        We can build on Linux Devuan Beowulf and OpenBSD 6.8.
-        
-        ENABLE_QT does not work on OpenBSD, but this appears to be a problem
-        for OpenBSD, not walkfg.py. We can get it to build by setting
-        Qt5_DIR=/usr/local/lib/qt5/cmake/Qt5, but we then get a crash at
-        runtime. The crash at runtime also happens with download_and_compile.sh
-        if we omit the -DENABLE_QT=OFF special-case.]
-
-
 Usage:
     We expect to be in a directory looking like:
         flightgear/
@@ -75,6 +64,9 @@ Args:
         
         If default, commands are run only if necessary.
     
+    --fp 0 | 1
+        If 1 we compile with -fno-omit-frame-pointer. Default is 0.
+    
     --gperf 0 | 1
         If 1, build with support for google perf.
     
@@ -105,47 +97,46 @@ Args:
         Use local OSG install instead of system OSG.
         
         For example:
-            (cd openscenegraph && mkdir build && cd build && cmake -DCMAKE_INSTALL_PREFIX=`pwd`/install -DCMAKE_BUILD_TYPE=RelWithDebInfo .. && time make -j 3 && make install)
-            .../walkfg.py --osg openscenegraph/build/install -b
-            
             time (true \
                     && cd openscenegraph \
                     && git checkout OpenSceneGraph-3.6 \
-                    && (rm -r build-3.6.5 || true) \
-                    && mkdir build-3.6.5 \
-                    && cd build-3.6.5 \
-                    && cmake -DCMAKE_INSTALL_PREFIX=`pwd`/install -DCMAKE_BUILD_TYPE=RelWithDebInfo .. \
+                    && (rm -r build || true) \
+                    && mkdir build \
+                    && cd build \
+                    && cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=`pwd`/install .. \
                     && time make -j 3 \
                     && make install \
                     && cd ../../ \
-                    && ../todo/walkfg.py --osg openscenegraph/build-3.6.5/install -b \
+                    && ../todo/walkfg.py --osg openscenegraph/build/install -b \
                     ) 2>&1|tee out
     
             time (true \
                     && cd openscenegraph \
-                    && (rm -r build-3.6.5-relwithdebinfo || true) \
-                    && mkdir build-3.6.5-relwithdebinfo \
-                    && cd build-3.6.5-relwithdebinfo \
+                    && (rm -r build-relwithdebinfo || true) \
+                    && mkdir build-relwithdebinfo \
+                    && cd build-relwithdebinfo \
                     && cmake -DCMAKE_INSTALL_PREFIX=`pwd`/install -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O2 -g -DNDEBUG" -DCMAKE_CC_FLAGS_RELWITHDEBINFO="-O2 -g -DNDEBUG" -DCMAKE_BUILD_TYPE=RelWithDebInfo .. \
                     && VERBOSE=1 make -j 3 \
                     && VERBOSE=1 make install \
                     ) 2>&1|tee out
-                    ../todo/walkfg.py --osg openscenegraph/build-3.6.5-relwithdebinfo/install -b
+                    ../todo/walkfg.py --osg openscenegraph/build-relwithdebinfo/install -b
     
-    -o <directory>
+    -o fgfs | test-suite | props-test
+        Set what to build. Default is fgfs.
+
     --out-dir <directory>
         Set the directory that will contain all generated files.
         
         Default is build-walk.
+    
+    --props-locking 0 | 1
+        If 0, build with SG_PROPS_UNTHREADSAFE pre-defined.
     
     --show
         Show settings.
     
     -t
         Show detailed timing information at end.
-    
-    --test-suite
-        Build test suite (e.g. build-walk/fgfs-test-suite.exe) not Flightgear.
     
     -v
     --verbose [+-fFdDrRcCe]
@@ -186,30 +177,35 @@ Requirements:
     
         Linux:
             apt install \
+                cmake \
                 freeglut3-dev \
+                g++ \
                 libasound-dev \
                 libboost-dev \
                 libcurl4-openssl-dev \
                 libdbus-1-dev \
                 libevent-dev \
+                libjpeg-dev \
                 libopenal-dev \
                 libpng-dev \
                 libqt5opengl5-dev \
                 libqt5svg5-dev \
                 libqt5websockets5-dev \
                 libudev-dev \
-                openscenegraph \
                 pkg-config \
-                qml-module-qtquick2 \
+                qml-module-qtquick-controls2 \
                 qml-module-qtquick-dialogs \
                 qml-module-qtquick-window2 \
-                qt5-default \
+                qml-module-qtquick2 \
                 qtbase5-dev-tools \
                 qtbase5-private-dev \
+                qtchooser \
                 qtdeclarative5-dev \
                 qtdeclarative5-private-dev \
                 qttools5-dev \
                 qttools5-dev-tools \
+
+                openscenegraph \
     
         OpenBSD:
             pkg_add \
@@ -265,6 +261,8 @@ g_timings = False
 g_verbose = 'der'
 g_test_suite = False
 g_verbose_srcs = []
+g_props_locking = True
+g_frame_pointer = False
 
 g_os = os.uname()[0]
 g_openbsd = (g_os == 'OpenBSD')
@@ -345,13 +343,17 @@ def get_gitfiles( directory):
     return ret
 
 def git_id( directory):
+    '''
+    Returns git sha.
+    '''
     id = subprocess.check_output( 'cd %s && PAGER= git show --pretty=oneline' % directory, shell=True)
     id = id.decode( 'latin-1')
     id = id.split( '\n', 1)[0]
+    id = id.split( ' ', 1)[0]
     return id
 
 
-def get_files():
+def get_files( target):
     '''
     Returns (all, cpp) where <all> is list of files known to git and <cpp> is
     subset of these files that are not headers and are used to build fgfs (e.g.
@@ -393,7 +395,7 @@ def get_files():
             'flightgear/3rdparty/joystick/jsMacOSX.cxx',
             #'flightgear/3rdparty/joystick/jsNone.cxx',
             'flightgear/3rdparty/joystick/jsWindows.cxx',
-            'flightgear/examples/netfdm/main.cpp',
+            'flightgear/examples/*',
             'flightgear/scripts/example/fgfsclient.c',
             'flightgear/scripts/example/fgfsclient.cxx',
             'flightgear/src/Airports/calc_loc.cxx',
@@ -423,6 +425,7 @@ def get_files():
 
             # 2021-03-06 DDS is new but seems to be broken.
             'flightgear/src/Network/DDS/*',
+            'flightgear/src/Network/dds_props.cxx',
             'simgear/simgear/io/SGDataDistributionService.cxx',
             
             # Things to allow legacy builds to work:
@@ -475,11 +478,7 @@ def get_files():
             'simgear/simgear/io/socktest.cxx',
             'simgear/simgear/io/tcp_client.cxx',
             'simgear/simgear/io/tcp_server.cxx',
-            'simgear/simgear/io/test_binobj.cxx',
-            'simgear/simgear/io/test_DNS.cxx',
-            'simgear/simgear/io/test_HTTP.cxx',
-            'simgear/simgear/io/test_repository.cxx',
-            'simgear/simgear/io/test_untar.cxx',
+            'simgear/simgear/io/test_*',
             'simgear/simgear/io/text_DNS.cxx',
             'simgear/simgear/magvar/testmagvar.cxx',
             'simgear/simgear/math/SGGeometryTest.cxx',
@@ -504,7 +503,8 @@ def get_files():
             'simgear/simgear/package/pkgutil.cxx',
             'simgear/simgear/props/easing_functions_test.cxx',
             'simgear/simgear/props/propertyObject_test.cxx',
-            'simgear/simgear/props/props_test.cxx',
+            #'simgear/simgear/props/props_test.cxx',
+            'simgear/simgear/props/props-unsafe.cxx',
             'simgear/simgear/scene/dem/*',
             'simgear/simgear/scene/material/EffectData.cxx',
             'simgear/simgear/scene/material/ElementBuilder.cxx',
@@ -527,7 +527,7 @@ def get_files():
             'simgear/simgear/structure/shared_ptr_test.cpp',
             'simgear/simgear/structure/state_machine_test.cxx',
             'simgear/simgear/structure/subsystem_test.cxx',
-            'simgear/simgear/structure/test_commands.cxx',
+            'simgear/simgear/structure/test_*',
             'simgear/simgear/timing/testtimestamp.cxx',
             'simgear/simgear/xml/testEasyXML.cxx',
             ]
@@ -550,7 +550,13 @@ def get_files():
                 'flightgear/3rdparty/joystick/jsNone.cxx',
                 ]
     
-    if g_test_suite:
+    if target == 'fgfs':
+        exclude_patterns += [
+                'flightgear/test_suite/*',
+                'flightgear/3rdparty/cppunit/*',
+                'simgear/simgear/props/props_test.cxx',
+                ]
+    elif target == 'test-suite':
         exclude_patterns += [
                 'flightgear/src/Main/bootstrap.cxx',
                 'flightgear/test_suite/system_tests/Instrumentation/testgps.cxx',
@@ -558,12 +564,15 @@ def get_files():
                 'flightgear/test_suite/attic/*',
                 'flightgear/3rdparty/cppunit/src/cppunit/DllMain.cpp',
                 'flightgear/3rdparty/cppunit/src/cppunit/Win32DynamicLibraryManager.cpp',
+                'simgear/simgear/props/props_test.cxx',
+                ]
+    elif target == 'props-test':
+        exclude_patterns += [
+                'flightgear/*',
+                'plib/*',
                 ]
     else:
-        exclude_patterns += [
-                'flightgear/test_suite/*',
-                'flightgear/3rdparty/cppunit/*',
-                ]
+        assert 0, f'target={target}'
     
     # It's important to sort exclude_patterns because we rely on ordering to
     # short-cut the searches we do below.
@@ -706,6 +715,13 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
     pkg-add.
     '''     
     cf = CompileFlags()
+    
+    cf.add( (
+            'flightgear/',
+            'simgear/',
+            ),
+            ' -Wno-deprecated-copy'
+            )
 
     cf.add( (
             'flightgear/3rdparty/cjson/cJSON.c',
@@ -857,8 +873,6 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
             ' -I flightgear/src'
             ' -I %s/walk-generated'
             ' -D ENABLE_AUDIO_SUPPORT'
-            ' -D JENKINS_BUILD_NUMBER=0'
-            ' -D JENKINS_BUILD_ID=0'
             % g_outdir
             )
 
@@ -1221,7 +1235,7 @@ if 0:
     sys.exit()
 
 
-def do_compile(walk_concurrent, gcc_base, gpp_base, cf, path):
+def do_compile(target, walk_concurrent, gcc_base, gpp_base, cf, path):
     '''
     Compiles <path> if necessary. Returns name of .o file.
     '''
@@ -1234,7 +1248,7 @@ def do_compile(walk_concurrent, gcc_base, gpp_base, cf, path):
 
     path_o = '%s/%s' % (g_outdir, path)
 
-    if g_test_suite:
+    if target == 'test-suite':
         if path in (
                 #'flightgear/src/Airports/airport.cxx',
                 'flightgear/src/Main/sentryIntegration.cxx',
@@ -1248,21 +1262,34 @@ def do_compile(walk_concurrent, gcc_base, gpp_base, cf, path):
     if g_build_debug:
         command += ' -g'
         path_o += ',debug'
+    if g_frame_pointer:
+        command += ' -fno-omit-frame-pointer'
+        path_o += ',fp'
     if g_build_optimise:
         # Allow selected files to be compiled without optimisation to
         # help debugging.
         if path in (
-                #'simgear/simgear/props/props.cxx',
+                #'flightgear/src/Aircraft/controls.cxx',
+                #'flightgear/src/Autopilot/pidcontroller.cxx',
+                #'flightgear/src/Main/options.cxx',
+                #'flightgear/src/Network/fgcom.cxx',
                 #'flightgear/src/Viewer/fg_os_osgviewer.cxx',
                 #'flightgear/src/Viewer/renderer.cxx',
+                #'simgear/simgear/props/props.cxx',
+                #'simgear/simgear/props/props.cxx',
                 #'simgear/simgear/scene/model/particles.cxx',
-                #'flightgear/src/Main/options.cxx',
-                #'flightgear/src/Autopilot/pidcontroller.cxx',
+                'flightgear/src/AIModel/AIMultiplayer.cxx',
+                'flightgear/src/Aircraft/replay.cxx',
                 ):
             walk.log(f'*** not optimising {path}')
+            command += ' -ggdb'
         else:
             command += ' -O3 -msse2 -mfpmath=sse -ftree-vectorize -ftree-slp-vectorize'
             path_o += ',opt'
+    #if path == 'flightgear/src/Add-ons/Addon.cxx':
+    #    walk.log(f'*** Using g++-9 to compile {path}')
+    #    assert command.startswith('c++ ')
+    #    command = 'g++-9 ' + command[4:]
 
     if g_osg_dir:
         path_o += ',osg'
@@ -1273,6 +1300,10 @@ def do_compile(walk_concurrent, gcc_base, gpp_base, cf, path):
         command = command + cf.get_flags_all( path)
     else:
         command = command + cf.get_flags( path)
+    
+    if not g_props_locking:
+        path_o += ',sgunsafe'
+        command = command + ' -D SG_PROPS_UNTHREADSAFE'
 
     #walk.log( 'command_cf: %s' % command_cf)
     #walk.log( 'command:    %s' % command)
@@ -1302,7 +1333,15 @@ def do_compile(walk_concurrent, gcc_base, gpp_base, cf, path):
     return path_o, doit, reason, e
 
 
-def build():
+def cc_version(cc):
+    t = subprocess.check_output(f'{cc} -dumpfullversion', shell=1, text=True)
+    t = t.strip()
+    t = t.split('.')
+    #walk.log(f'cc={cc!r} returning: {t}')
+    return t
+    
+
+def build( target):
     '''
     Builds Flightgear using g_* settings.
     '''
@@ -1325,305 +1364,318 @@ def build():
             walk.log( f'Have changed RLIMIT_DATA from {soft} to {soft_new}')
 
     timings.begin( 'get_files')
-    all_files, src_fgfs = get_files()
+    all_files, src_fgfs = get_files( target)
     timings.end( 'get_files')
 
-    # Create patched version of plib/src/sl/slDSP.cxx.
-    timings.begin( 'plib-patch')
-    path = 'plib/src/sl/slDSP.cxx'
-    path_patched = path + '-patched.cxx'
-    with open(path) as f:
-        text = f.read()
-    text = text.replace(
-            '#elif (defined(UL_BSD) && !defined(__FreeBSD__)) || defined(UL_SOLARIS)',
-            '#elif (defined(UL_BSD) && !defined(__FreeBSD__) && !defined(__OpenBSD__)) || defined(UL_SOLARIS)',
-            )
-    walk.file_write( text, path_patched)
-    src_fgfs.remove(path)
-    src_fgfs.append( path_patched)
-    timings.end( 'plib-patch')
+    if target != 'props-test':
+        # Create patched version of plib/src/sl/slDSP.cxx.
+        timings.begin( 'plib-patch')
+        path = 'plib/src/sl/slDSP.cxx'
+        path_patched = path + '-patched.cxx'
+        with open(path) as f:
+            text = f.read()
+        text = text.replace(
+                '#elif (defined(UL_BSD) && !defined(__FreeBSD__)) || defined(UL_SOLARIS)',
+                '#elif (defined(UL_BSD) && !defined(__FreeBSD__) && !defined(__OpenBSD__)) || defined(UL_SOLARIS)',
+                )
+        walk.file_write( text, path_patched)
+        src_fgfs.remove(path)
+        src_fgfs.append( path_patched)
+        timings.end( 'plib-patch')
 
-    # Generate .moc files. We look for files containing Q_OBJECT.
-    #
-    timings.begin( 'moc')
-    moc = 'moc'
-    if g_openbsd:
-        moc = 'moc-qt5'
-    for i in all_files:
-        if i.startswith( 'flightgear/src/GUI/') or i.startswith( 'flightgear/src/Viewer/'):
-            i_base, ext = os.path.splitext( i)
-            if ext in ('.h', '.hxx', '.hpp'):
-                with open( i) as f:
-                    text = f.read()
-                if 'Q_OBJECT' in text:
-                    cpp_file = '%s/%s.moc.cpp' % (g_outdir, i)
-                    system(
-                            '%s %s -o %s' % (moc, i, cpp_file),
-                            '%s.walk' % cpp_file,
-                            'Running moc on %s' % i,
-                            )
-                    src_fgfs.append( cpp_file)
-            elif ext in ('.cpp', '.cxx'):
-                #walk.log( 'checking %s' % i)
-                with open( i) as f:
-                    text = f.read()
-                if re.search( '\n#include ".*[.]moc"\n', text):
-                    #walk.log( 'running moc on: %s' % i)
-                    moc_file = '%s/%s.moc' % (g_outdir, i_base)
-                    system(
-                            '%s %s -o %s' % (moc, i, moc_file),
-                            '%s.walk' % moc_file,
-                            'Running moc on %s' % i,
-                            )
-    timings.end( 'moc')
+        # Generate .moc files. We look for files containing Q_OBJECT.
+        #
+        timings.begin( 'moc')
+        moc = 'moc'
+        if g_openbsd:
+            moc = 'moc-qt5'
+        for i in all_files:
+            if i.startswith( 'flightgear/src/GUI/') or i.startswith( 'flightgear/src/Viewer/'):
+                i_base, ext = os.path.splitext( i)
+                if ext in ('.h', '.hxx', '.hpp'):
+                    with open( i) as f:
+                        text = f.read()
+                    if 'Q_OBJECT' in text:
+                        cpp_file = '%s/%s.moc.cpp' % (g_outdir, i)
+                        system(
+                                '%s %s -o %s' % (moc, i, cpp_file),
+                                '%s.walk' % cpp_file,
+                                'Running moc on %s' % i,
+                                )
+                        src_fgfs.append( cpp_file)
+                elif ext in ('.cpp', '.cxx'):
+                    #walk.log( 'checking %s' % i)
+                    with open( i) as f:
+                        text = f.read()
+                    if re.search( '\n#include ".*[.]moc"\n', text):
+                        #walk.log( 'running moc on: %s' % i)
+                        moc_file = '%s/%s.moc' % (g_outdir, i_base)
+                        system(
+                                '%s %s -o %s' % (moc, i, moc_file),
+                                '%s.walk' % moc_file,
+                                'Running moc on %s' % i,
+                                )
+        timings.end( 'moc')
 
 
-    # Create flightgear's config.h file.
-    #
-    timings.begin( 'config')
-    fg_version = open('flightgear/flightgear-version').read().strip()
-    fg_version_major, fg_version_minor, fg_version_tail = fg_version.split('.')
-    root = os.path.abspath( '.')
-    
-    file_write( textwrap.dedent(f'''
-            #pragma once
-            #define FLIGHTGEAR_VERSION "{fg_version}"
-            #define FLIGHTGEAR_MAJOR_VERSION "{fg_version_major}"
-            #define FLIGHTGEAR_MINOR_VERSION "{fg_version_minor}"
-            #define VERSION    "%s"
-            #define PKGLIBDIR  "%s/fgdata"
-            #define FGSRCDIR   "%s/flightgear"
-            #define FGBUILDDIR "%s"
+        # Create flightgear's config.h file.
+        #
+        timings.begin( 'config')
+        fg_version = open('flightgear/flightgear-version').read().strip()
+        fg_version_major, fg_version_minor, fg_version_tail = fg_version.split('.')
+        root = os.path.abspath( '.')
 
-            /* #undef FG_NDEBUG */
+        file_write( textwrap.dedent(f'''
+                #pragma once
+                #define FLIGHTGEAR_VERSION "{fg_version}"
+                #define FLIGHTGEAR_MAJOR_VERSION "{fg_version_major}"
+                #define FLIGHTGEAR_MINOR_VERSION "{fg_version_minor}"
+                #define VERSION    "%s"
+                #define PKGLIBDIR  "%s/fgdata"
+                #define FGSRCDIR   "%s/flightgear"
+                #define FGBUILDDIR "%s"
 
-            #define ENABLE_SIMD
-            #define ENABLE_SP_FDM
-            #define JSBSIM_USE_GROUNDREACTIONS
+                /* #undef FG_NDEBUG */
 
-            // JSBSim needs this, to switch from standalone to in-FG mode
-            #define FGFS
+                #define ENABLE_SIMD
+                #define ENABLE_SP_FDM
+                #define JSBSIM_USE_GROUNDREACTIONS
 
-            #define PU_USE_NONE // PLIB needs this to avoid linking to GLUT
+                // JSBSim needs this, to switch from standalone to in-FG mode
+                #define FGFS
 
-            #define ENABLE_PLIB_JOYSTICK
+                #define PU_USE_NONE // PLIB needs this to avoid linking to GLUT
 
-            // threads are required (used to be optional)
-            #define ENABLE_THREADS 1
+                #define ENABLE_PLIB_JOYSTICK
 
-            // audio support is assumed
-            #define ENABLE_AUDIO_SUPPORT 1
+                // threads are required (used to be optional)
+                #define ENABLE_THREADS 1
 
-            #define HAVE_SYS_TIME_H
-            /* #undef HAVE_WINDOWS_H */
-            #define HAVE_MKFIFO
+                // audio support is assumed
+                #define ENABLE_AUDIO_SUPPORT 1
 
-            #define HAVE_VERSION_H 1 // version.h is assumed for CMake builds
+                #define HAVE_SYS_TIME_H
+                /* #undef HAVE_WINDOWS_H */
+                #define HAVE_MKFIFO
 
-            #define ENABLE_UIUC_MODEL
-            #define ENABLE_LARCSIM
-            #define ENABLE_YASIM
-            #define ENABLE_JSBSIM
+                #define HAVE_VERSION_H 1 // version.h is assumed for CMake builds
 
-            #define WEB_BROWSER "sensible-browser"
+                #define ENABLE_UIUC_MODEL
+                #define ENABLE_LARCSIM
+                #define ENABLE_YASIM
+                #define ENABLE_JSBSIM
 
-            // Ensure FG_HAVE_xxx always have a value
-            #define FG_HAVE_HLA ( + 0)
-            //#define FG_HAVE_GPERFTOOLS {g_gperf}
+                #define WEB_BROWSER "sensible-browser"
 
-            /* #undef SYSTEM_SQLITE */
+                // Ensure FG_HAVE_xxx always have a value
+                #define FG_HAVE_HLA ( + 0)
+                //#define FG_HAVE_GPERFTOOLS {g_gperf}
 
-            #define ENABLE_IAX
+                /* #undef SYSTEM_SQLITE */
 
-            #define HAVE_DBUS
+                #define ENABLE_IAX
 
-            #define ENABLE_HID_INPUT
-            #define ENABLE_PLIB_JOYSTICK
+                #define HAVE_DBUS
 
-            #define HAVE_QT
+                #define ENABLE_HID_INPUT
+                #define ENABLE_PLIB_JOYSTICK
 
-            #define HAVE_SYS_TIME_H
-            //#define HAVE_SYS_TIMEB_H
-            #define HAVE_TIMEGM
-            #define HAVE_DAYLIGHT
-            //#define HAVE_FTIME
-            #define HAVE_GETTIMEOFDAY
+                #define HAVE_QT
 
-            #define FG_TEST_SUITE_DATA "{root}/flightgear/test_suite/test_data"
+                #define HAVE_SYS_TIME_H
+                //#define HAVE_SYS_TIMEB_H
+                #define HAVE_TIMEGM
+                #define HAVE_DAYLIGHT
+                //#define HAVE_FTIME
+                #define HAVE_GETTIMEOFDAY
 
-            #define FG_BUILD_TYPE "Dev"
+                #define FG_TEST_SUITE_DATA "{root}/flightgear/test_suite/test_data"
 
-            #define HAVE_PUI
+                #define FG_BUILD_TYPE "Dev"
 
-            // Seems to need fgdata at build time?
-            //#define HAVE_QRC_TRANSLATIONS
+                #define HAVE_PUI
 
-            #define ENABLE_SWIFT
+                // Seems to need fgdata at build time?
+                //#define HAVE_QRC_TRANSLATIONS
 
-            /* #undef HAVE_SENTRY */
-            #define SENTRY_API_KEY ""
-            ''' % (
-                    fg_version,
-                    root,
-                    root,
-                    g_outdir ,
+                #define ENABLE_SWIFT
+
+                /* #undef HAVE_SENTRY */
+                #define SENTRY_API_KEY ""
+                ''' % (
+                        fg_version,
+                        root,
+                        root,
+                        g_outdir ,
+                        )
+                ),
+                '%s/walk-generated/config.h' % g_outdir,
+                )
+
+
+        # Create simgear's config.h file.
+        #
+        file_write( textwrap.dedent(
+                '''
+                #define HAVE_GETTIMEOFDAY
+                #define HAVE_TIMEGM
+                #define HAVE_SYS_TIME_H
+                #define HAVE_UNISTD_H
+                #define HAVE_STD_INDEX_SEQUENCE
+                ''')
+                ,
+                '%s/walk-generated/simgear/simgear_config.h' % g_outdir,
+                )
+
+        # Create various other headers.
+        #
+        file_write(
+                '#define FLIGHTGEAR_VERSION "%s"\n' % fg_version,
+                '%s/walk-generated/Include/version.h' % g_outdir,
+                )
+
+        git_id_text = git_id( 'flightgear').replace('"', '\\"')
+        revision = ''
+        revision += '#define JENKINS_BUILD_NUMBER 0\n'
+        revision += '#define JENKINS_BUILD_ID "none"\n'
+        revision += '#define REVISION "%s"\n' % git_id_text
+        file_write(
+                revision,
+                '%s/walk-generated/Include/build.h' % g_outdir,
+                )
+        file_write(
+                revision,
+                '%s/walk-generated/Include/flightgearBuildId.h' % g_outdir,
+                )
+
+        file_write(
+                '#pragma once\n' + 'void initFlightGearEmbeddedResources();\n',
+                '%s/walk-generated/EmbeddedResources/FlightGear-resources.hxx' % g_outdir,
+                )
+
+        # We should probably have a separate step to build fgrcc and run it to generate
+        # this, but actually it only seems to produce a trivially small generated file.
+        #
+        file_write( textwrap.dedent( '''
+                // -*- coding: utf-8 -*-
+                //
+                // File automatically generated by fgrcc.
+
+                #include <memory>
+                #include <utility>
+
+                #include <simgear/io/iostreams/CharArrayStream.hxx>
+                #include <simgear/io/iostreams/zlibstream.hxx>
+                #include <simgear/embedded_resources/EmbeddedResource.hxx>
+                #include <simgear/embedded_resources/EmbeddedResourceManager.hxx>
+
+                using std::unique_ptr;
+                using simgear::AbstractEmbeddedResource;
+                using simgear::RawEmbeddedResource;
+                using simgear::ZlibEmbeddedResource;
+                using simgear::EmbeddedResourceManager;
+
+                void initFlightGearEmbeddedResources()
+                {
+                  EmbeddedResourceManager::instance();
+                }
+                ''')
+                ,
+                '%s/walk-generated/EmbeddedResources/FlightGear-resources.cxx' % g_outdir,
+                )
+
+        # When we generate C++ source files (not headers), we need to add them to
+        # src_fgfs so they get compiled into the final executable.
+        #
+
+        src_fgfs.append( '%s/walk-generated/EmbeddedResources/FlightGear-resources.cxx' % g_outdir)
+
+
+        simgear_version = open('simgear/simgear-version').read().strip()
+        file_write(
+                '#define SIMGEAR_VERSION %s\n' % simgear_version,
+                '%s/walk-generated/simgear/version.h' % g_outdir,
+                )
+        timings.end( 'config')
+
+        timings.begin( 'rcc/uic')
+        if g_openbsd:
+            system(
+                    'rcc'
+                            ' -name resources'
+                            ' -o %s/walk-generated/flightgear/src/GUI/qrc_resources.cpp'
+                            ' flightgear/src/GUI/resources.qrc'
+                            % g_outdir
+                            ,
+                    '%s/walk-generated/flightgear/src/GUI/qrc_resources.cpp.walk' % g_outdir,
+                    'Running rcc on flightgear/src/GUI/resources.qrc',
                     )
-            ),
-            '%s/walk-generated/config.h' % g_outdir,
-            )
+        else:
+            system(
+                    '/usr/lib/qt5/bin/rcc'
+                            ' --name resources'
+                            ' --output %s/walk-generated/flightgear/src/GUI/qrc_resources.cpp'
+                            ' flightgear/src/GUI/resources.qrc'
+                            % g_outdir
+                            ,
+                    '%s/walk-generated/flightgear/src/GUI/qrc_resources.cpp.walk' % g_outdir,
+                    'Running rcc on flightgear/src/GUI/resources.qrc',
+                    )
+        src_fgfs.append( '%s/walk-generated/flightgear/src/GUI/qrc_resources.cpp' % g_outdir)
 
-
-    # Create simgear's config.h file.
-    #
-    file_write( textwrap.dedent(
-            '''
-            #define HAVE_GETTIMEOFDAY
-            #define HAVE_TIMEGM
-            #define HAVE_SYS_TIME_H
-            #define HAVE_UNISTD_H
-            #define HAVE_STD_INDEX_SEQUENCE
-            ''')
-            ,
-            '%s/walk-generated/simgear/simgear_config.h' % g_outdir,
-            )
-
-    # Create various other headers.
-    #
-    file_write(
-            '#define FLIGHTGEAR_VERSION "%s"\n' % fg_version,
-            '%s/walk-generated/Include/version.h' % g_outdir,
-            )
-
-    git_id_text = git_id( 'flightgear').replace('"', '\\"')
-    revision = '#define REVISION "%s"\n' % git_id_text
-    file_write(
-            revision,
-            '%s/walk-generated/Include/build.h' % g_outdir,
-            )
-    file_write(
-            revision,
-            '%s/walk-generated/Include/flightgearBuildId.h' % g_outdir,
-            )
-
-    file_write(
-            '#pragma once\n' + 'void initFlightGearEmbeddedResources();\n',
-            '%s/walk-generated/EmbeddedResources/FlightGear-resources.hxx' % g_outdir,
-            )
-
-    # We should probably have a separate step to build fgrcc and run it to generate
-    # this, but actually it only seems to produce a trivially small generated file.
-    #
-    file_write( textwrap.dedent( '''
-            // -*- coding: utf-8 -*-
-            //
-            // File automatically generated by fgrcc.
-
-            #include <memory>
-            #include <utility>
-
-            #include <simgear/io/iostreams/CharArrayStream.hxx>
-            #include <simgear/io/iostreams/zlibstream.hxx>
-            #include <simgear/embedded_resources/EmbeddedResource.hxx>
-            #include <simgear/embedded_resources/EmbeddedResourceManager.hxx>
-
-            using std::unique_ptr;
-            using simgear::AbstractEmbeddedResource;
-            using simgear::RawEmbeddedResource;
-            using simgear::ZlibEmbeddedResource;
-            using simgear::EmbeddedResourceManager;
-
-            void initFlightGearEmbeddedResources()
-            {
-              EmbeddedResourceManager::instance();
-            }
-            ''')
-            ,
-            '%s/walk-generated/EmbeddedResources/FlightGear-resources.cxx' % g_outdir,
-            )
-
-    # When we generate C++ source files (not headers), we need to add them to
-    # src_fgfs so they get compiled into the final executable.
-    #
-
-    src_fgfs.append( '%s/walk-generated/EmbeddedResources/FlightGear-resources.cxx' % g_outdir)
-
-
-    simgear_version = open('simgear/simgear-version').read().strip()
-    file_write(
-            '#define SIMGEAR_VERSION %s\n' % simgear_version,
-            '%s/walk-generated/simgear/version.h' % g_outdir,
-            )
-    timings.end( 'config')
-
-    timings.begin( 'rcc/uic')
-    if g_openbsd:
+        uic = 'uic'
+        if g_openbsd:
+            uic = '/usr/local/lib/qt5/bin/uic'
         system(
-                'rcc'
-                        ' -name resources'
-                        ' -o %s/walk-generated/flightgear/src/GUI/qrc_resources.cpp'
-                        ' flightgear/src/GUI/resources.qrc'
-                        % g_outdir
+                '%s -o %s/walk-generated/Include/ui_InstallSceneryDialog.h'
+                        ' flightgear/src/GUI/InstallSceneryDialog.ui' % (uic, g_outdir)
                         ,
-                '%s/walk-generated/flightgear/src/GUI/qrc_resources.cpp.walk' % g_outdir,
-                'Running rcc on flightgear/src/GUI/resources.qrc',
+                '%s/walk-generated/Include/ui_InstallSceneryDialog.h.walk' % g_outdir,
+                'Running uic on flightgear/src/GUI/InstallSceneryDialog.ui',
                 )
-    else:
-        system(
-                '/usr/lib/qt5/bin/rcc'
-                        ' --name resources'
-                        ' --output %s/walk-generated/flightgear/src/GUI/qrc_resources.cpp'
-                        ' flightgear/src/GUI/resources.qrc'
-                        % g_outdir
+
+        e = system(
+                '%s -o %s/walk-generated/ui_SetupRootDialog.h'
+                        ' flightgear/src/GUI/SetupRootDialog.ui' % (uic, g_outdir)
                         ,
-                '%s/walk-generated/flightgear/src/GUI/qrc_resources.cpp.walk' % g_outdir,
-                'Running rcc on flightgear/src/GUI/resources.qrc',
+                '%s/walk-generated/ui_SetupRootDialog.h.walk' % g_outdir,
+                'Running uic on flightgear/src/GUI/SetupRootDialog.ui',
                 )
-    src_fgfs.append( '%s/walk-generated/flightgear/src/GUI/qrc_resources.cpp' % g_outdir)
+        timings.end( 'rcc/uic')
 
-    uic = 'uic'
-    if g_openbsd:
-        uic = '/usr/local/lib/qt5/bin/uic'
-    system(
-            '%s -o %s/walk-generated/Include/ui_InstallSceneryDialog.h'
-                    ' flightgear/src/GUI/InstallSceneryDialog.ui' % (uic, g_outdir)
-                    ,
-            '%s/walk-generated/Include/ui_InstallSceneryDialog.h.walk' % g_outdir,
-            'Running uic on flightgear/src/GUI/InstallSceneryDialog.ui',
-            )
+        # Set up softlinks that look like a plib install - some code requires plib
+        # installation header tree.
+        #
+        timings.begin( 'plib-install')
+        def find( root, leaf):
+            for dirpath, dirnames, filenames in os.walk( root):
+                if leaf in filenames:
+                    return os.path.join( dirpath, leaf)
+            assert 0
 
-    e = system(
-            '%s -o %s/walk-generated/ui_SetupRootDialog.h'
-                    ' flightgear/src/GUI/SetupRootDialog.ui' % (uic, g_outdir)
-                    ,
-            '%s/walk-generated/ui_SetupRootDialog.h.walk' % g_outdir,
-            'Running uic on flightgear/src/GUI/SetupRootDialog.ui',
-            )
-    timings.end( 'rcc/uic')
-
-    # Set up softlinks that look like a plib install - some code requires plib
-    # installation header tree.
-    #
-    timings.begin( 'plib-install')
-    def find( root, leaf):
-        for dirpath, dirnames, filenames in os.walk( root):
-            if leaf in filenames:
-                return os.path.join( dirpath, leaf)
-        assert 0
-
-    dirname = '%s/walk-generated/plib-include/plib' % g_outdir
-    command = 'mkdir -p %s; cd %s' % (dirname, dirname)
-    for leaf in 'pw.h pu.h sg.h netSocket.h js.h ssg.h puAux.h sl.h sm.h sl.h psl.h ul.h pw.h ssgAux.h ssgaSky.h fnt.h ssgaBillboards.h net.h ssgMSFSPalette.h ulRTTI.h puGLUT.h'.split():
-        path = find( 'plib/src', leaf)
-        #walk.log(f'plib path: {path}')
-        path = os.path.abspath( path)
-        command += ' && ln -sf %s %s' % (path, leaf)
-    os.system( command)
-    timings.end( 'plib-install')
+        dirname = '%s/walk-generated/plib-include/plib' % g_outdir
+        command = 'mkdir -p %s; cd %s' % (dirname, dirname)
+        for leaf in 'pw.h pu.h sg.h netSocket.h js.h ssg.h puAux.h sl.h sm.h sl.h psl.h ul.h pw.h ssgAux.h ssgaSky.h fnt.h ssgaBillboards.h net.h ssgMSFSPalette.h ulRTTI.h puGLUT.h'.split():
+            path = find( 'plib/src', leaf)
+            #walk.log(f'plib path: {path}')
+            path = os.path.abspath( path)
+            command += ' && ln -sf %s %s' % (path, leaf)
+        os.system( command)
+        timings.end( 'plib-install')
 
     # Set up compile/link commands.
     #
     gcc_base = 'cc'
-    gpp_base = 'c++ -std=gnu++17'
+    gpp_base = 'c++'
+    
+    if g_linux:
+        if cc_version(gpp_base)[0] == '10':
+            # g++-10 get internal errors for some files.
+            walk.log(f'Forcing gcc-9 and g++-9')
+            gpp_base = 'g++-9'
+            gcc_base = 'gcc-9'
+    
+    gpp_base += ' -std=gnu++17'
     if g_clang:
         gcc_base = 'clang -Wno-unknown-warning-option'
         gpp_base = 'clang++ -std=c++17 -Wno-unknown-warning-option'
@@ -1661,11 +1713,18 @@ def build():
     #
     timings.begin( 'commands')
     link_command = gpp_base
+    link_command += ' -rdynamic'    # So backtrace() and backtrace_symbols() see symbols.
     
-    if g_test_suite:
-        exe = f'{g_outdir}/fgfs-test-suite'
-    else:
+    if target == 'fgfs':
         exe = f'{g_outdir}/fgfs'
+    elif target == 'test-suite':
+        exe = f'{g_outdir}/fgfs-test-suite'
+    elif target == 'props-test':
+        exe = f'{g_outdir}/fgfs-props-test'
+    elif target == 'compression-test':
+        exe = f'{g_outdir}/fgfs-compression-test'
+    else:
+        assert 0
 
     if g_clang:
         exe += ',clang'
@@ -1681,6 +1740,12 @@ def build():
     
     if g_flags_all:
         exe += ',flags-all'
+    
+    if g_frame_pointer:
+        exe += ',fp'
+    
+    if not g_props_locking:
+        exe += ',sgunsafe'
 
     exe += '.exe'
 
@@ -1725,6 +1790,13 @@ def build():
     
     link_command += ' -o %s' % exe
     
+    # 2021-05-22: used to put this at the end of the linker command but this
+    # started failing with devuan-5.10.0-6-amd64 - seems like we need to put .o
+    # files before .so files in the link command.
+    #
+    link_command_extra_path = '%s-link-extra' % exe
+    link_command += ' @%s' % link_command_extra_path
+    
     # Other libraries, including OSG.
     #
     def find1(*globs):
@@ -1746,6 +1818,14 @@ def build():
             'osgText',
             'osgUtil',
             'osgViewer',
+            
+            'osgAnimation',
+            'osgManipulator',
+            'osgPresentation',
+            'osgShadow',
+            'osgUI',
+            'osgVolume',
+            'osgWidget',
             )
     
     if g_osg_dir:
@@ -1813,9 +1893,7 @@ def build():
         # Compile each source file. While doing so, we also add to the final
         # link command.
         #
-        num_compiles = 0
-        num_compiles_to_run = len(src_fgfs)
-        progress_t = 0
+        num_compiles_queued = 0
         for i, path in enumerate( src_fgfs):
         
             def prefixfn():
@@ -1823,44 +1901,40 @@ def build():
                 Returns percentage formed by blending i/len(src_fgfs) with
                 walk_concurrent.num_commands_run / num_compiles_to_run.
                 '''
-                p1 = i / len(src_fgfs)
-                if num_compiles_to_run:
-                    p2 = walk_concurrent.num_commands_run / num_compiles_to_run
-                    p = (1-p1) * p1 + p1 * p2
-                    return f'[{100*p:3.0f}% p1={100*p1:3.0f}% p2={100*p2:3.0f}% ] '
+                p = i / len(src_fgfs)
+                if num_compiles_queued:
+                    p = walk_concurrent.num_commands_run / (num_compiles_queued * len(src_fgfs)/i)
                 else:
-                    p = p1
+                    p = i / len(src_fgfs)
                 return f'[{100*p:3.0f}%] '
             walk.log_prefix_set( prefixfn)
             
             walk.log_ping( 'looking at: %s' % path, 4)
-            path_o, doit, reason, e = do_compile(walk_concurrent, gcc_base, gpp_base, cf, path)
+            path_o, doit, reason, e = do_compile(
+                    target,
+                    walk_concurrent,
+                    gcc_base,
+                    gpp_base,
+                    cf,
+                    path,
+                    )
             if doit:
-                if 0:
-                    walk.log( f'scheduling compilation to: {path_o}')
-            else:
-                num_compiles_to_run -= 1
+                num_compiles_queued += 1
             link_command_files.append( ' %s' % path_o)
-            num_compiles += 1
 
         # Wait for all compile commands to finish before doing the link.
         #
         walk.log( f'Waiting for compile tasks to complete')
         
-        if num_compiles_to_run:
-            walk.log_prefix_set( lambda: f'[{100 * walk_concurrent.num_commands_run / num_compiles_to_run:3.0f}%] ')
         walk_concurrent.join()
         timings.end( 'compile')
         
         walk.log_prefix_set( '')
         walk.log( f'Finished compiling. Number of compiles run was {walk_concurrent.num_commands_run}/{walk_concurrent.num_commands}.')
         
-        link_command_extra_path = '%s-link-extra' % exe
         link_command_files.sort()
         link_command_files = '\n'.join( link_command_files)
         file_write( link_command_files, link_command_extra_path)
-
-        link_command += ' @%s' % link_command_extra_path
         
         #link_command += ' -Wl,--verbose'
 
@@ -1889,6 +1963,7 @@ def build():
                 text += ' -ex "handle SIG32 noprint nostop"'
                 text += ' -ex "set print thread-events off"'
                 text += ' -ex "set print pretty on"'
+                #text += ' -ex "catch throw"'
                 text += ' -ex run'
                 text += f' --args '
             else:
@@ -1968,16 +2043,19 @@ def main():
     global g_concurrency
     global g_flags_all
     global g_force
+    global g_frame_pointer
     global g_gperf
     global g_link_only
     global g_max_load_average
     global g_osg_dir
     global g_outdir
+    global g_props_locking
     global g_test_suite
     global g_timings
     global g_verbose
     
     do_build = False
+    target = 'fgfs'
     
     args = Args( sys.argv[1:])
     if not args.argv:
@@ -2017,6 +2095,7 @@ def main():
             
         elif arg == '--debug':
             g_build_debug = int( args.next())
+            walk.log(f'Have set g_build_debug={g_build_debug}')
         
         elif arg == '--flags-all':
             g_flags_all = int( args.next())
@@ -2027,6 +2106,9 @@ def main():
                 g_force = None
             else:
                 g_force = int( force)
+        
+        elif arg == '--fp':
+            g_frame_pointer = int( args.next())
         
         elif arg == '--gperf':
             g_gperf = int( args.next())
@@ -2057,8 +2139,12 @@ def main():
         elif arg == '--osg':
             g_osg_dir = args.next()
         
-        elif arg == '--out-dir' or arg == '-o':
+        elif arg == '--out-dir':
             g_outdir = args.next()
+        
+        elif arg == '--props-locking':
+            g_props_locking = int(args.next())
+            print(f'g_props_locking={g_props_locking}')
         
         elif arg == '--show':
             print( 'concurrency:        %s' % g_concurrency)
@@ -2074,8 +2160,11 @@ def main():
         elif arg == '-t':
             g_timings = True
         
-        elif arg == '--test-suite':
-            g_test_suite = True
+        elif arg == '-o':
+            target = args.next()
+            targets = 'fgfs test-suite props-test'.split()
+            assert target in targets, \
+                    f'unrecognised target={target} should be one of: {" ".join(targets)}.'
         
         elif arg == '--verbose' or arg == '-v':
             v = args.next()
@@ -2099,7 +2188,7 @@ def main():
             raise Exception( 'Unrecognised arg: %s' % arg)
     
     if do_build:
-        build()
+        build( target)
 
 
 def exception_info( exception=None, limit=None, out=None, prefix='', oneline=False):
