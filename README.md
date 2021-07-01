@@ -8,6 +8,9 @@ A build system for flightgear: walkfg.py.
 
     Provides a mechanism for running commands which avoids actually running
     commands if we can infer that they would not change any generated files.
+    
+    As of 2021-06-24 we use md5 hashes to detect changes to files, instead of
+    mtimes.
 
 
 ### Use as a build system:
@@ -61,10 +64,9 @@ A build system for flightgear: walkfg.py.
     contains information about the command and what files the command (or its
     child commands) read or wrote.
 
-    On subsequent invocations of the same command, we check the modification
-    times of the files listed in <walk_file>. If all input files (e.g. opened
-    for reading), are older than all output files (e.g. opened for writing), we
-    do not run the command.
+    On subsequent invocations of the same command, we check whether the files
+    listed in <walk_file> have changed, using md5 hashes. If all input files
+    (e.g. opened for reading) are unchanged, we do not run the command.
 
     Otherwise we run the command as before and re-create <walk_file>.
 
@@ -128,15 +130,6 @@ A build system for flightgear: walkfg.py.
         walk.py cc myapp.exe.walk -Wall -W -o myapp.exe foo.c bar.c
 
 
-### Limitatations:
-
-    As of 2020-06-02 we are very experimental.
-    
-    Things might go wrong if a command uses the first successful match when
-    searching for a file in multiple places, and a file is created where the
-    command previously failed to open.
-
-    
 ### Implementation details:
 
     We use two approaches to finding out what files a command (or its
