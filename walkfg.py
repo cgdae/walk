@@ -409,6 +409,7 @@ def get_files( target):
             'flightgear/src/GUI/FGWindowsMenuBar.cxx',
             'flightgear/src/GUI/WindowsFileDialog.cxx',
             'flightgear/src/GUI/WindowsMouseCursor.cxx',
+            'flightgear/src/Viewer/VRManager.cxx',
             
             # 2020-6-10: needs qt5-qtbase-private-devel, which isn't
             # in devuan ? fgfs seems to build ok without it.
@@ -1021,6 +1022,10 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
             ' -D HAVE_MEMMOVE'
             )
 
+    cf.add('simgear/simgear/scene/model',
+            ' -I simgear/3rdparty/tiny_gltf'
+            )
+
     cf.add('plib/',
             ' -I plib/src/fnt'
             ' -I plib/src/sg'
@@ -1278,8 +1283,9 @@ def do_compile(target, walk_concurrent, gcc_base, gpp_base, cf, path):
                 #'simgear/simgear/props/props.cxx',
                 #'simgear/simgear/props/props.cxx',
                 #'simgear/simgear/scene/model/particles.cxx',
-                'flightgear/src/AIModel/AIMultiplayer.cxx',
-                'flightgear/src/Aircraft/replay.cxx',
+                #'flightgear/src/AIModel/AIMultiplayer.cxx',
+                #'flightgear/src/Aircraft/replay.cxx',
+                #'simgear/simgear/scene/viewer/CompositorPass.cxx',
                 ):
             walk.log(f'*** not optimising {path}')
             command += ' -ggdb'
@@ -1848,6 +1854,7 @@ def build( target):
                 ' -l z'
                 ' -l ossaudio'
                 ' -l execinfo'  # for backtrace*().
+                ' -l Xss'
                 )
     
     if g_linux:
@@ -1863,6 +1870,7 @@ def build( target):
                 ' -l glut'
                 ' -l openal'
                 ' -l z'
+                ' -l Xss'
                 ' -pthread'
                 )
         
