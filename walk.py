@@ -1168,7 +1168,7 @@ def system_check( walk_path, command, command_compare=None):
     else:
         diff = (command != w.command)
     if diff:
-        if verbose:
+        if 1 or verbose:
             log( 'command has changed:')
             log( '    from %s' % w.command)
             log( '    to   %s' % command)
