@@ -722,7 +722,7 @@ class Concurrent:
         
     def _raise_if_errors( self):
         if self.keep_going:
-            #log( f'*** keep_going is true')
+            #log( f'*** keep_going is true. self.errors.empty()={self.errors.empty()}')
             return
         if not self.errors.empty():
             #log( f'raising exception')
@@ -1168,7 +1168,7 @@ def system_check( walk_path, command, command_compare=None):
     else:
         diff = (command != w.command)
     if diff:
-        if 1 or verbose:
+        if 0 or verbose:
             log( 'command has changed:')
             log( '    from %s' % w.command)
             log( '    to   %s' % command)
