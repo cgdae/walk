@@ -93,7 +93,7 @@ Args:
     --optimise 0 | 1
         If 1 (the default), we build with compiler optimisations.
     
-    --osg <directory>
+    --osg-dir <directory>
         Use local OSG install instead of system OSG.
         
         For example:
@@ -123,6 +123,13 @@ Args:
     
     -o fgfs | test-suite | props-test
         Set what to build. Default is fgfs.
+    
+    --osg 0|1
+        Experimental: if 1, we also compile files in openscenegraph/ instead of
+        using an existing build.
+        
+        As of 2021-11-06, this does not work because the build does not create
+        the OSG plugin libraries.
 
     --out-dir <directory>
         Set the directory that will contain all generated files.
@@ -252,8 +259,10 @@ g_clang = False
 g_concurrency = 3
 g_flags_all = False
 g_force = None
+g_keep_going = False
 g_link_only = False
 g_max_load_average = 6
+g_osg = False   # If true, we build osg ourselves; does not yet work.
 g_osg_dir = None
 g_outdir = 'build-walk'
 g_gperf = 0
@@ -533,6 +542,73 @@ def get_files( target):
             'simgear/simgear/xml/testEasyXML.cxx',
             ]
     
+    if g_osg:
+        exclude_patterns += [
+                'openscenegraph/src/OpenThreads/win32/*',
+                'openscenegraph/src/osgPlugins/jp2/*',
+                'openscenegraph/src/osgPlugins/las/*',
+                'openscenegraph/include/osgViewer/api/Win32/*',
+                'openscenegraph/src/osgViewer/PixelBufferWin32.cpp',
+                'openscenegraph/src/osgViewer/GraphicsWindowWin32.cpp',
+                'openscenegraph/src/osgViewer/PixelBufferWin32.cpp',
+                'openscenegraph/src/osgPlugins/lua/*',
+                'openscenegraph/src/osgPlugins/dae/*',
+                'openscenegraph/src/osgPlugins/ffmpeg/*',
+                'openscenegraph/src/osgPlugins/vnc/*',
+                'openscenegraph/src/osgPlugins/txp/*',
+                'openscenegraph/src/osgPlugins/sdl/*',
+                'openscenegraph/src/osgPlugins/svg/*',
+                'openscenegraph/src/osgPlugins/quicktime/*',
+                'openscenegraph/src/osgPlugins/pdf/*',
+                'openscenegraph/src/osgPlugins/osc/*',
+                'openscenegraph/src/osgPlugins/ogr/*',
+                'openscenegraph/src/osgPlugins/nvtt/*',
+                'openscenegraph/src/osgPlugins/gstreamer/*',
+                'openscenegraph/src/osgPlugins/imageio/*',
+                'openscenegraph/src/osgPlugins/fbx/*',
+                'openscenegraph/src/osgPlugins/ffmpeg/*',
+                'openscenegraph/src/osgPlugins/exr/*',
+                'openscenegraph/src/osgPlugins/directshow/*',
+                'openscenegraph/src/osgPlugins/dicom/*',
+                'openscenegraph/src/osgPlugins/bsp/*',
+                'openscenegraph/src/osgPlugins/ZeroConfDevice/*',
+                'openscenegraph/src/osgPlugins/Inventor/*',
+                'openscenegraph/src/osgPlugins/OpenCASCADE/*',
+                'openscenegraph/src/osgPlugins/python/*',
+                'openscenegraph/src/osgPlugins/gdal/*',
+                'openscenegraph/src/osgPlugins/gif/*',
+                'openscenegraph/src/osgPlugins/RestHttpDevice/*',
+                'openscenegraph/src/osgPlugins/gta/*',
+                'openscenegraph/src/osgPlugins/avfoundation/*',
+                'openscenegraph/src/osgPlugins/QTKit/*',
+                'openscenegraph/src/osgPlugins/V8/*',
+                
+                'openscenegraph/src/osgPlugins//*',
+                'openscenegraph/src/osgPlugins//*',
+                'openscenegraph/src/osgPlugins//*',
+                'openscenegraph/src/osgPlugins//*',
+                'openscenegraph/src/osgPlugins//*',
+
+                'openscenegraph/src/osg/Matrix_implementation.cpp',
+                'openscenegraph/examples/*',
+                'openscenegraph/applications/*',
+                
+                # duplicates simgear/simgear/scene/tgdb/VPBTechnique.cxx
+                #'openscenegraph/src/osgTerrain/GeometryTechnique.cpp',
+                
+                'openscenegraph/src/osgWrappers/deprecated-dotosg/*',
+                
+                # Is #include-d by src/osg/glu/libtess/priorityq.cpp.
+                'openscenegraph/src/osg/glu/libtess/priorityq-heap.cpp',
+                
+                'openscenegraph/src/osgWrappers/serializers/osgUI/Widget.cpp',
+                
+                'openscenegraph/src/osgUtil/shaders/*',
+                
+                'openscenegraph/src/osgPlugins/ive/*',
+                #'openscenegraph/src/osgTerrain/TerrainTile.cpp',
+                ]
+    
     if g_openbsd:
         exclude_patterns += [
                 'flightgear/3rdparty/hidapi/linux/*',
@@ -583,11 +659,14 @@ def get_files( target):
     files_flightgear = get_gitfiles( 'flightgear')
     files_simgear = get_gitfiles( 'simgear')
     files_plib = get_gitfiles( 'plib')
+    
+    files_osg = files_osg = get_gitfiles( 'openscenegraph') if g_osg else []
 
     all_files = ([]
             + files_flightgear
             + files_simgear
             + files_plib
+            + files_osg
             )
 
     ret = []
@@ -625,9 +704,11 @@ def cc_command_compare( a, b):
     '''
     global _cc_command_compare_regex
     if _cc_command_compare_regex is None:
-        _cc_command_compare_regex = re.compile( ' (-Wno-[^ ]+)|(-std=[^ ]+)')
+        _cc_command_compare_regex = re.compile( '( -Wno-[^ ]+)|( -std=[^ ]+)|( -fmax-errors=[^ ]+)')
     aa = re.sub( _cc_command_compare_regex, '', a)
     bb = re.sub( _cc_command_compare_regex, '', b)
+    #print(f'aa={aa!r}')
+    #print(f'bb={bb!r}')
     ret = aa != bb
     ret0 = a != b
     if not ret and ret0:
@@ -642,6 +723,8 @@ if 1:
     assert cc_command_compare( 'cc -o foo bar.c -Wno-xyz -Werror', 'cc -o foo bar.c -Werror') == 0
     assert cc_command_compare( 'cc -o foo bar.c -Wno-xyz -Werror', 'cc -o foo bar.c -Wno-q -Werror') == 0
     assert cc_command_compare( 'cc -o foo bar.c -Wno-xyz -Werror', 'cc -o foo bar.c -O2 -Werror') != 0
+    assert cc_command_compare( 'cc -o foo bar.c -fmax-errors=10', 'cc -o foo bar.c -fmax-errors=11') == 0
+    assert cc_command_compare( 'cc -o foo bar.c -fmax-errors=10 l', 'cc -o foo bar.c l') == 0
 
 
 
@@ -716,6 +799,38 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
     pkg-add.
     '''     
     cf = CompileFlags()
+    
+    cf.add( ('openscenegraph/'),
+            ' -DOSG_LIBRARY -Dosg_EXPORTS -I openscenegraph/include -isystem /usr/X11R6/include -Wno-deprecated-copy',
+            )
+    
+    cf.add( ('openscenegraph/src/osgTerrain/GeometryTechnique.cpp'),
+            ' -D WALKFG_OSG',
+            )
+    
+    cf.add( ('openscenegraph/src/osgPlugins/zip'),
+            ' -D ZIP_STD',
+            )
+
+    cf.add(
+            'openscenegraph/src/osgUtil/tristripper/src/',
+            ' -I openscenegraph/src/osgUtil/tristripper/include',
+            )
+    
+    cf.add(
+            'openscenegraph/src/osgPlugins/osc/',
+            ' -I openscenegraph/src/osgPlugins/osc',
+            )
+    
+    cf.add(
+            'openscenegraph/src/osgPlugins/txp/',
+            ' -I openscenegraph/src/osgPlugins/txp',
+            )
+    
+    cf.add(
+            'openscenegraph/src/osgPlugins/freetype/',
+            ' -I /usr/include/freetype2',
+            )
     
     cf.add( (
             'flightgear/',
@@ -1274,28 +1389,32 @@ def do_compile(target, walk_concurrent, gcc_base, gpp_base, cf, path):
         # Allow selected files to be compiled without optimisation to
         # help debugging.
         if path in (
+                #'flightgear/src/AIModel/AIMultiplayer.cxx',
                 #'flightgear/src/Aircraft/controls.cxx',
+                #'flightgear/src/Aircraft/replay.cxx',
                 #'flightgear/src/Autopilot/pidcontroller.cxx',
+                #'flightgear/src/FDM/YASim/ControlMap.cpp',
+                #'flightgear/src/FDM/YASim/FGFDM.cpp',
+                #'flightgear/src/GUI/FGPUIDialog.cxx',
+                #'flightgear/src/GUI/FGPUIMenuBar.cxx',
+                #'flightgear/src/Main/locale.cxx',
                 #'flightgear/src/Main/options.cxx',
                 #'flightgear/src/Network/fgcom.cxx',
                 #'flightgear/src/Viewer/fg_os_osgviewer.cxx',
                 #'flightgear/src/Viewer/renderer.cxx',
+                #'flightgear/src/Viewer/viewmgr.cxx',
+                #'simgear/simgear/props/props.cxx',
                 #'simgear/simgear/props/props.cxx',
                 #'simgear/simgear/props/props.cxx',
                 #'simgear/simgear/scene/model/particles.cxx',
-                #'flightgear/src/AIModel/AIMultiplayer.cxx',
-                #'flightgear/src/Aircraft/replay.cxx',
-                #'simgear/simgear/scene/viewer/CompositorPass.cxx',
+                #'simgear/simgear/scene/viewer/CompositorPass.cxx',                
+                #'simgear/simgear/screen/video-encoder.cxx',
                 ):
             walk.log(f'*** not optimising {path}')
             command += ' -ggdb'
         else:
             command += ' -O3 -msse2 -mfpmath=sse -ftree-vectorize -ftree-slp-vectorize'
             path_o += ',opt'
-    #if path == 'flightgear/src/Add-ons/Addon.cxx':
-    #    walk.log(f'*** Using g++-9 to compile {path}')
-    #    assert command.startswith('c++ ')
-    #    command = 'g++-9 ' + command[4:]
 
     if g_osg_dir:
         path_o += ',osg'
@@ -1310,10 +1429,6 @@ def do_compile(target, walk_concurrent, gcc_base, gpp_base, cf, path):
     if not g_props_locking:
         path_o += ',sgunsafe'
         command = command + ' -D SG_PROPS_UNTHREADSAFE'
-
-    #walk.log( 'command_cf: %s' % command_cf)
-    #walk.log( 'command:    %s' % command)
-    #assert command == command_cf, f'command_cf: {command_cf}\ncommand:    {command}'
 
     path_o += '.o'
 
@@ -1685,6 +1800,8 @@ def build( target):
     if g_clang:
         gcc_base = 'clang -Wno-unknown-warning-option'
         gpp_base = 'clang++ -std=c++17 -Wno-unknown-warning-option'
+    else:
+        gpp_base += ' -fmax-errors=10'
     gcc_base += ' -pthread -W -Wall -fPIC -Wno-unused-parameter'
     gpp_base += ' -pthread -W -Wall -fPIC -Wno-unused-parameter'
     
@@ -1834,7 +1951,9 @@ def build( target):
             'osgWidget',
             )
     
-    if g_osg_dir:
+    if g_osg:
+        pass
+    elif g_osg_dir:
         libdir = find1(f'{g_osg_dir}/lib', f'{g_osg_dir}/lib64')
         for l in osg_libs:
             # Link with release-debug OSG libraries if available.
@@ -1871,7 +1990,28 @@ def build( target):
                 ' -l openal'
                 ' -l z'
                 ' -l Xss'
+                
+                # need with --osg?
+                ' -l freetype'
+                ' -l png'
+                ' -l jpeg'
+                ' -l tiff'
+                
                 ' -pthread'
+                )
+
+    # Things for ffmpeg. On Devuan, requires:
+    #   apt install libavresample-dev libavfilter-dev
+    #
+    link_command += (
+                ' -l avcodec'
+                ' -l avutil'
+                ' -l swscale'
+                ' -l avformat'
+                ' -l avresample'
+                ' -l avfilter'
+                ' -l swresample'
+                #' -Wl,--trace'
                 )
         
     link_command += ' %s' % libs_linkflags
@@ -1892,6 +2032,7 @@ def build( target):
     walk_concurrent = walk.Concurrent(
             g_concurrency,
             max_load_average=g_max_load_average,
+            keep_going=g_keep_going,
             )
     
     cf = make_compile_flags( libs_cflags, cpp_feature_defines)
@@ -1932,10 +2073,17 @@ def build( target):
 
         # Wait for all compile commands to finish before doing the link.
         #
-        walk.log( f'Waiting for compile tasks to complete')
+        walk.log( f'Waiting for {num_compiles_queued} compile tasks to complete')
         
         walk_concurrent.join()
         timings.end( 'compile')
+        
+        if g_keep_going:
+            walk.log(f'calling walk_concurrent.get_errors()')
+            ee = walk_concurrent.get_errors()
+            walk.log(f'walk_concurrent.get_errors() returned {len(ee)}')
+            if ee:
+                raise Exception(f'Compile errors: {len(ee)}')
         
         walk.log_prefix_set( '')
         walk.log( f'Finished compiling. Number of compiles run was {walk_concurrent.num_commands_run}/{walk_concurrent.num_commands}.')
@@ -2018,6 +2166,12 @@ class Args:
         self.argv = argv
         self.pos = 0
         self.pos_sub = None
+    def __iter__(self):
+        while 1:
+            try:
+                yield self.next()
+            except StopIteration:
+                break
     def next( self):
         while 1:
             if self.pos >= len(self.argv):
@@ -2026,6 +2180,7 @@ class Args:
             if (not self.pos_sub
                     and arg.startswith('-')
                     and not arg.startswith('--')
+                    and ' ' not in arg
                     ):
                 # Start splitting current arg.
                 self.pos_sub = 1
@@ -2053,8 +2208,10 @@ def main():
     global g_force
     global g_frame_pointer
     global g_gperf
+    global g_keep_going
     global g_link_only
     global g_max_load_average
+    global g_osg
     global g_osg_dir
     global g_outdir
     global g_props_locking
@@ -2128,6 +2285,9 @@ def main():
             g_concurrency = abs(int( args.next()))
             assert g_concurrency >= 0
         
+        elif arg == '-k':
+            g_keep_going = True
+        
         elif arg == '-l':
             g_max_load_average = float( args.next())
         
@@ -2145,6 +2305,11 @@ def main():
             g_build_optimise = int( args.next())
         
         elif arg == '--osg':
+            g_osg = int(args.next())
+            if g_osg:
+                g_osg_dir = None
+        
+        elif arg == '--osg-dir':
             g_osg_dir = args.next()
         
         elif arg == '--out-dir':
