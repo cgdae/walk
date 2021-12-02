@@ -2138,7 +2138,7 @@ def _make_preload( walk_file):
                 file_write( _preload_c, path_c)
                 if mtime( path_c, 0) > mtime( path_lib, 0):
                     ldl = '-ldl' if _osname == 'Linux' else ''
-                    command = 'gcc -g -W -Wall -shared -fPIC %s -o %s %s' % (
+                    command = 'cc -g -W -Wall -shared -fPIC %s -o %s %s' % (
                             ldl,
                             path_lib,
                             path_c,
