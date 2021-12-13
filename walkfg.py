@@ -272,6 +272,7 @@ g_test_suite = False
 g_verbose_srcs = []
 g_props_locking = True
 g_frame_pointer = False
+g_ffmpeg = True
 
 g_os = os.uname()[0]
 g_openbsd = (g_os == 'OpenBSD')
@@ -1243,6 +1244,10 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
             ' -I flightgear/3rdparty/cppunit/include'
             )
     
+    cf.add( 'simgear/simgear/screen/video-encoder.cxx',
+            ' -D SG_FFMPEG'
+            )
+
     return cf
 
 
@@ -1402,6 +1407,7 @@ def do_compile(target, walk_concurrent, gcc_base, gpp_base, cf, path):
                 #'flightgear/src/Network/fgcom.cxx',
                 #'flightgear/src/Viewer/fg_os_osgviewer.cxx',
                 #'flightgear/src/Viewer/renderer.cxx',
+                #'flightgear/src/Viewer/sview.cxx',
                 #'flightgear/src/Viewer/viewmgr.cxx',
                 #'simgear/simgear/props/props.cxx',
                 #'simgear/simgear/props/props.cxx',
@@ -2001,16 +2007,17 @@ def build( target):
                 )
 
     # Things for ffmpeg. On Devuan, requires:
-    #   apt install libavresample-dev libavfilter-dev
+    #   sudo apt install libavcodec-dev libavutil-dev libswscale-dev libavformat-dev
     #
-    link_command += (
+    if g_ffmpeg:
+        link_command += (
                 ' -l avcodec'
                 ' -l avutil'
                 ' -l swscale'
                 ' -l avformat'
-                ' -l avresample'
-                ' -l avfilter'
-                ' -l swresample'
+                #' -l avresample'
+                #' -l avfilter'
+                #' -l swresample'
                 #' -Wl,--trace'
                 )
         
