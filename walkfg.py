@@ -1027,6 +1027,20 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
                 ' -I flightgear/3rdparty/iaxclient/lib/libspeex/include'
                 )
 
+    if g_linux:
+        cf.add(
+                'flightgear/3rdparty/iaxclient/lib/audio_openal.c'
+                ,
+                ' -I /usr/include/AL'
+                )
+
+    if g_openbsd:
+        cf.add(
+                'flightgear/3rdparty/iaxclient/lib/audio_openal.c'
+                ,
+                ' -I /usr/local/include/AL'
+                )
+
     cf.add( 'flightgear/3rdparty/joystick'
             ,
             ' -I flightgear/3rdparty/joystick/lib/portaudio/bindings/cpp/include'
@@ -1405,6 +1419,7 @@ def do_compile(target, walk_concurrent, gcc_base, gpp_base, cf, path):
                 #'flightgear/src/Main/locale.cxx',
                 #'flightgear/src/Main/options.cxx',
                 #'flightgear/src/Network/fgcom.cxx',
+                #'flightgear/src/Time/TimeManager.cxx',
                 #'flightgear/src/Viewer/fg_os_osgviewer.cxx',
                 #'flightgear/src/Viewer/renderer.cxx',
                 #'flightgear/src/Viewer/sview.cxx',
