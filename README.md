@@ -144,4 +144,4 @@ A build system for flightgear: walkfg.py.
 
     It's not yet clear which of LD_PRELOAD or strace/ktrace is the better
     approach overall; maybe LD_PRELOAD could be faster (though this needs
-    profilng) but tracing syscalls could be more reliable.
+    profiling) but tracing syscalls could be more reliable.
