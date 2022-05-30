@@ -1,6 +1,13 @@
 #! /usr/bin/env python3
 
 '''
+License:
+
+    Copyright 2020-2022 Julian Smith.
+
+    SPDX-License-Identifier: GPL-3.0-only
+
+
 Summary:
 
     Provides a mechanism for running commands which avoids actually running
@@ -27,16 +34,16 @@ Use as a build system:
     which commands are run, so for example we could choose to compile newer
     source files first, which often finds compilation errors more quickly.
 
+
 How it works:
 
     The first time we run a command, we create a file <walk_file> which
-    contains information about the command and what files the command (or its
-    child commands) read or wrote.
+    contains information about the command and the md5 hashes of the files that
+    the command (or its child commands) read.
 
-    On subsequent invocations of the same command, we check the modification
-    times of the files listed in <walk_file>. If all input files (e.g. opened
-    for reading), are older than all output files (e.g. opened for writing), we
-    do not run the command.
+    On subsequent invocations of the same command, we check the md5 hash of the
+    input files listed in <walk_file> (i.e. those files that were opened for
+    reading). If all of these hashes are unchanged, we do not run the command.
 
     Otherwise we run the command as before and re-create <walk_file>.
 
@@ -45,7 +52,7 @@ How it works:
     command. We also ensure that we are resilient to being interrupted by
     signals or system crashes. For example we write a zero-length <walk_file>
     before re-running a command so that if we are killed before the command
-    completes, then the next we are run we will know the command was
+    completes, then the next time we are run we will know the command was
     interrupted and can force a re-run.
 
 
@@ -82,7 +89,7 @@ Command line usage:
     We are primarily a python module, but can also be used from the command
     line:
 
-        walk.py [<args>] <walk-path> <command> ...
+        walk.py <args> <walk-path> <command> ...
 
     Args:
         --new <path>
@@ -92,21 +99,26 @@ Command line usage:
             0 - never run the command.
             1 - always run the command.
         
+        -m preload | trace
+            Force use of preload library or strace/ktrace mechanisms.
+        
         --test
             Does some basic tests.
+        
+        --test-abc
+            For internal use by --test.
+        
+        --test-profile <walk>
+            Measures speed of processing walk file.
+        
+        --time-load-all <root>
+            Times processing of all .walk files within <root>.
 
     Examples:
 
         walk.py cc myapp.exe.walk -Wall -W -o myapp.exe foo.c bar.c
 
 
-Limitatations:
-
-    Things might go wrong if a command uses the first successful match when
-    searching for a file in multiple places, and a file is created where the
-    command previously failed to open.
-
-    
 Implementation details:
 
     We use two approaches to finding out what files a command (or its
@@ -117,44 +129,37 @@ Implementation details:
     As of 2020-06-01, the LD_PRELOAD approach on Linux doesn't work due to
     ld appearing to open the output file using a function that has proven
     difficult to intercept. On OpenBSD we can use either approach but default
-    to LD_PRELOAD.
-
-    It's not yet clear which of LD_PRELOAD or strace/ktrace is the better
-    approach overall; maybe LD_PRELOAD could be faster (though this needs
-    profilng) but tracing syscalls could be more reliable.
+    to LD_PRELOAD as it appears to be faster.
+    
+    If using the LD_PRELOAD approach, we automatically create the required
+    library as required (this Python file itself contains the required C source
+    code).
 
 
 Future:
 
-    Exact mtimes:
-    
-        We could store the mtimes of input files in .walk files, then force
-        rebuild if actual mtimes differ, not just if they are older than
-        the output file. This would avoid problems with clock-skew or other
-        situations where input files have changed by still have old mtimes.
-
-    Automatic concurrency:
+    Automatic ordering/concurrency:
     
         It might be possible to use the information in walk files to do
         automatic command ordering: look at existing build files to find
         dependency information between commands (i.e. find commands whose
         output files are read by other commands) and run commands in the right
-        order without the caller specify anything other than an unordered list
-        of commands.
+        order without the caller needing to specify anything other than an
+        unordered list of commands.
 
-        And we could also do automatic concurrency - run multiple commands
-        concurrently when they are known to not depend on each otheer.
+        This could be extended to do automatic concurrency - run multiple
+        commands concurrently when they are known to not depend on each otheer.
 
-        Dependency information in walk files is not available the first time
-        a build is run, and might be incorrect if a command has changed, so
-        we'd always have to re-scan walk files after commands have completed
-        and re-run commands if necessary. But most of the time this wouldn't
-        necessary.
+        Dependency information in walk files is not available the first time a
+        build is run, and might be incorrect if a command has changed, so we'd
+        always have to re-scan walk files after commands have completed and
+        re-run commands in the correct order as required. But most of the time
+        this wouldn't necessary.
     
     Automatic selection of source files:
     
-        A log of the script for building Flightgear is for selecting the source
-        files to compile and link together.
+        A large part of the script for building Flightgear is for selecting the
+        source files to compile and link together.
 
         It might be possible to write code that extracts unresolved and defined
         symbols after each compilation and saves to a separate file next to the
@@ -163,45 +168,438 @@ Future:
         implement the unresolved symbols.
 
         We would need help to resolve situations where more than one file
-        implements the same symbol.
-
-
-License:
-
-    Copyright 2020 Julian Smith.
-
-    This program is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
+        implements the same symbol. And heuristics could be used to find likely
+        source files by grepping for missing symbols names.
 '''
 
-import codecs
-import hashlib
-import io
-import os
-import pickle
-import queue
-import re
-import subprocess
-import sys
-import textwrap
-import threading
-import time
 
+class CommandFailed( Exception):
+    '''
+    Result of running a command.
+    '''
+    def __init__( self, wait_status, text=None):
+        self.wait_status = wait_status
+        self.text = text
+
+    
+def system(
+        command,
+        walk_path,
+        verbose=None,
+        force=None,
+        description=None,
+        command_compare=None,
+        method=None,
+        out=None,
+        out_prefix='',
+        out_buffer=False,
+        use_hash=True,
+        ):
+    '''
+    Runs the specified command unless stored info from previous run implies
+    that the command would not change output files.
+    
+    Returns:
+        None if we did not run the command. Otherwise a subprocess-style
+        integer termination status: zero or positive exit code, or negative
+        signal number
+    
+    Args:
+        command:
+            The command to run.
+        walk_path:
+            Name of walk file; if it exists it will contain information on what
+            files the command read and wrote. If we run the command, this file
+            is updated.
+        verbose:
+            A string where the presence of particular characters controls what
+            diagnostics are generated:
+
+                c   Show the command itself if we run the command.
+                d   Show command description if we run the command.
+                m   Show generic message if we are running the command.
+                r   Show the reason for running the command.
+
+            Upper-case versions of the above cause the equivalent messages to
+            be generated if we do not run the command.
+        force:
+            If None (the default), we run the command unless walk file and/or
+            hash/mtimes indicate it will make no changes.
+
+            Otherwise if true (e.g. 1 or True) we always run the command; if
+            false (e.g. 0 or False) we never run the command.
+        description:
+            Text used by <verbose>'s 'd' option. E.g. 'Compiling foo.c'.
+        method:
+            None, 'preload' or 'trace'.
+
+            If None, we use default setting for the OS we are running on.
+
+            If 'trace' we use Linux strace or OpenBSD ktrace to find what file
+            operations the command used.
+
+            If 'preload' we include our own code using LD_PRELOAD to find calls
+            to open() etc.
+        command_compare:
+            If not None, should be callable taking two string commands, and
+            return non-zero if these commands differ significantly.
+
+            E.g. for gcc-style compilation commands this could ignore any -W*
+            args to avoid unnecessary recompilation caused by changes only to
+            warning flags.
+        out:
+            Where the command's stdout and stderr go:
+                None:
+                    If both out_prefix and out_buffer are false, the
+                    command's output goes directly to the inherited
+                    stdout/stderr. Otherwise it is sent (via a pipe) to our
+                    stdout.
+
+                A callable taking a single <text> param.
+
+                An object with .write() method taking a single <text> param.
+
+                An integer >= 0, used with os.write().
+
+                A subprocess module special value (should not be
+                subprocess.PIPE) such as subprocess.DEVNULL: passed directly to
+                subprocess.Popen().
+        out_prefix:
+            If not None, prepended to each line sent to <out>.
+        out_buffer:
+            If true, we buffer up output and send to <out> in one call after
+            command has terminated.
+        use_hash:
+            If true (the default) we use md5 hash, otherwise we use mtime, when
+            deciding whether a file should cause the command to be run.
+    '''
+    doit, reason = system_check(
+            walk_path,
+            command,
+            command_compare,
+            force,
+            use_hash,
+            )
+    
+    return system_doit(
+            doit,
+            reason,
+            command,
+            walk_path,
+            verbose,
+            description,
+            command_compare,
+            method,
+            out,
+            out_prefix,
+            out_buffer,
+            )
+
+
+class Concurrent:
+    '''
+    Support for running commands concurrently.
+    
+    Usage:
+        Instead of calling walk.system(), create a walk.Concurrent instance and
+        use its .system() or .system_r() methods.
+
+        To wait until all scheduled tasks have completed, call .join().
+
+        Then to close down the internal threads, call .end().
+        
+    self.num_commands is number of times self.system() was called.
+
+    self.num_commands_run is number of times that self.system() actually ran
+    the specified command.
+    '''
+    def __init__( self, num_threads, keep_going=False, max_load_average=None, use_hash=True):
+        '''
+        num_threads:
+            Number of threads to run. (If zero, our .system() methods simply
+            calls walk.system() directly.)
+        keep_going:
+            If false (the default) we raise exception from .system() and
+            .join() if a previous command has failed. Otherwise new commands
+            will be scheduled regardless.
+        max_load_average:
+            If not None, threads do not start new commands if current load
+            average is above this value.
+        use_hash:
+            Used when we check commands scheduled by calls to self.system() and
+            self.system_r().
+            
+        Errors from scheduled commands can be retreived using .get_errors().
+        '''
+        self.num_threads = num_threads
+        self.keep_going = keep_going
+        self.max_load_average = max_load_average
+        self.use_hash = use_hash
+        
+        self.num_commands = 0
+        self.num_commands_run = 0
+        
+        self.queue = queue.Queue()
+        self.errors = queue.Queue()
+        
+        # self.errors contains a list of errors from commands run by our
+        # threads. It is mainly used as a boolean indication that one or more
+        # commands have failed - our threads stop work if self.errors is not
+        # empty, and our .system*() and .join() methods similarly raise an
+        # exception if self.errors is not empty.
+        self.threads = []
+        
+        # Start our threads.
+        for i in range( self.num_threads):
+            thread = threading.Thread( target=self._thread_fn, daemon=True)
+            self.threads.append( thread)
+            thread.start()
+    
+    def _thread_fn( self):
+        while 1:
+            item = self.queue.get()
+            
+            if item is None:
+                # This is self.end() telling us to exit.
+                self.queue.task_done()
+                return
+                
+            if not self.keep_going and not self.errors.empty():
+                # Error has occurred, so don't process any more tasks.
+                self.queue.task_done()
+                continue
+            
+            if self.max_load_average is not None:
+                # Block while load average is high.
+                it = 0
+                while 1:
+                    current_load_average = os.getloadavg()[0]
+                    if current_load_average < self.max_load_average:
+                        break
+                    if it % 5 == 0:
+                        log( f'[Waiting for load_average={current_load_average:.1f} to reduce below {self.max_load_average:.1f}...]')
+                    time.sleep(1)
+                    it += 1
+            
+            # <item> is a command for us to run.
+            (
+                command,
+                walk_path,
+                verbose,
+                force,
+                description,
+                command_compare,
+                out,
+                out_prefix,
+                out_buffer,
+            ) = item
+            if isinstance(force, tuple):
+                # This item was queued by Concurrent.system_r(), which has
+                # already called system_check() on the main thread.
+                doit, reason = force
+            else:
+                # This item was queued by Concurrent.system().
+                doit, reason = system_check(
+                        walk_path,
+                        command,
+                        command_compare,
+                        force,
+                        self.use_hash,
+                        )
+            
+            e = system_doit(
+                    doit,
+                    reason,
+                    command,
+                    walk_path,
+                    verbose,
+                    description,
+                    command_compare,
+                    None,   # method
+                    out,
+                    out_prefix,
+                    out_buffer,
+                    )
+            if e is not None:
+                self.num_commands_run += 1
+            if e:
+                #log( f'*** appending error e={e} walk_path={walk_path}')
+                self.errors.put( (command, walk_path, e))
+            self.queue.task_done()
+        
+    def _raise_if_errors( self):
+        '''
+        Raises exception if self.keep_going is false and self.errors is not empty.
+        '''
+        if self.keep_going:
+            #log( f'*** keep_going is true. self.errors.empty()={self.errors.empty()}')
+            return
+        if not self.errors.empty():
+            #log( f'raising exception')
+            raise Exception( 'task(s) failed')
+    
+    def system_r( self,
+            command,
+            walk_path,
+            verbose=None,
+            force=None,
+            description=None,
+            command_compare=None,
+            out=None,
+            out_prefix='',
+            out_buffer=None,
+            ):
+        '''
+        Like Concurrent.system() but calls system_check() on the current thread
+        before queueing the item, allowing us to return information on whether
+        the command is to be run.
+        
+        Returns (doit, reason, e) where <e> is None if self.num_threads is
+        non-zero.
+        
+        If self.num_threads is zero, we run the command immediately and <e> is
+        the termination status as with walk.system().
+        '''
+        self.num_commands += 1
+        self._raise_if_errors()
+        doit, reason = system_check(
+                walk_path,
+                command,
+                command_compare,
+                force=force,
+                use_hash=self.use_hash,
+                )
+        #log( f'system_check() returned doit={doit} walk_path={walk_path}')
+        if doit and self.num_threads:
+            self.queue.put(
+                (
+                    command,
+                    walk_path,
+                    verbose,
+                    (doit, reason),
+                    description,
+                    command_compare,
+                    out,
+                    out_prefix,
+                    out_buffer,
+                )
+                )
+            return doit, reason, None
+        else:
+            # If doit is false this will output diagnostics.
+            e = system_doit(
+                    doit,
+                    reason,
+                    command,
+                    walk_path,
+                    verbose,
+                    description,
+                    command_compare,
+                    out=out,
+                    out_prefix=out_prefix,
+                    out_buffer=out_buffer,
+                    )
+            return doit, reason, e
+            
+    def system( self,
+            command,
+            walk_path,
+            verbose=None,
+            force=None,
+            description=None,
+            command_compare=None,
+            out=None,
+            out_prefix=None,
+            out_buffer=None,
+            ):
+        '''
+        Schedule a command to be run. This will call walk.system() on one of
+        our internal threads.
+        
+        Will raise an exception if an earlier command failed (unless we were
+        constructed with keep_going=true).
+        '''
+        self._raise_if_errors()
+        
+        self.num_commands += 1
+        if self.num_threads:
+            self.queue.put(
+                    (
+                    command,
+                    walk_path,
+                    verbose,
+                    force,
+                    description,
+                    command_compare,
+                    out,
+                    out_prefix,
+                    out_buffer,
+                    ))
+        else:
+            e = system(
+                    command,
+                    walk_path,
+                    verbose,
+                    force,
+                    description,
+                    command_compare,
+                    out=out,
+                    out_prefix=out_prefix,
+                    out_buffer=out_buffer,
+                    use_hash=self.use_hash,
+                    )
+            if e:
+                self.errors.put( (command, walk_path, e))
+            if e is not None:
+                self.num_commands_run += 1
+    
+    def join( self):
+        '''
+        Waits until all current tasks have finished.
+        
+        Will raise an exception if an earlier command failed (unless we were
+        constructed with keep_going=true).
+        '''
+        self._raise_if_errors()
+        self.queue.join()
+        self._raise_if_errors()
+    
+    def get_errors( self):
+        '''
+        Returns list of errors from completed tasks. Must only be called after
+        .join().
+
+        These errors will not be returned again by later calls to
+        .get_errors().
+
+        Each returned error is (command, walk_path, e).
+        '''
+        ret = []
+        while 1:
+            if self.errors.empty():
+                break
+            e = self.errors.get()
+            ret.append( e)
+        return ret
+    
+    def end( self):
+        '''
+        Tells all threads to terminate and returns when they have terminated.
+        '''
+        for i in range( self.num_threads):
+            self.queue.put( None)
+        self.queue.join()
+        for t in self.threads:
+            t.join()
 
 _log_prefix = ''
+_log_last_t = 0
 
 def log_prefix_set( prefix):
+    '''
+    prefix:
+        A string or a callable returning a string.
+    '''
     global _log_prefix
     _log_prefix = prefix
 
@@ -216,7 +614,6 @@ class LogPrefixScope:
         global _log_prefix
         _log_prefix = self.prefix_prev
 
-_log_last_t = 0
 def log( text):
     global _log_last_t
     out = sys.stdout
@@ -237,16 +634,42 @@ def log_ping( text, interval):
     if t - _log_last_t > interval:
         log( text)
 
-g_use_hash =  True
+
+#
+# Everything below here is internal implementation details, and not for
+# external use.
+#
+
+import codecs
+import hashlib
+import io
+import os
+import pickle
+import queue
+import re
+import subprocess
+import sys
+import textwrap
+import threading
+import time
+
+
+_force_new_files = set()
 _mtime_new = 3600*24*365*10*1000
 _mtime_cache = dict()
+_file_hash_cache = dict()
+_osname = os.uname()[0]
+_linux = ( _osname == 'Linux')
+_openbsd = ( _osname == 'OpenBSD')
+
 
 def mtime( path, default=None):
     '''
     Returns mtime of file, or <default> if error - e.g. doesn't
     exist. Caches previously-returned information, so it's important to call
-    mtime_cache_clear() if a file is updated.
+    mtime_cache_clear() if a file is updated in between calls to walk.mtime().
     '''
+    global _mtime_cache
     t = _mtime_cache.get( path, -1)
     if t == -1:
         # Not in cache.
@@ -257,7 +680,6 @@ def mtime( path, default=None):
         _mtime_cache[ path] = t
     return t
 
-_file_hash_cache = dict()
 
 def file_hash(path):
     '''
@@ -271,7 +693,9 @@ def file_hash(path):
                 contents = f.read()
             ret = hashlib.md5(contents).digest()
         except:
-            ret = -1 # Must be true so we can reuse as 'open for reading' flag, but != True.
+            ret = -1
+            # Must be true so we can reuse as 'open for reading' flag, but !=
+            # True.
         _file_hash_cache[path] = ret
     return ret
 
@@ -290,6 +714,8 @@ def mtime_cache_clear( path=None):
 def mtime_cache_mark_new( path):
     path = os.path.abspath( path)
     _mtime_cache[ path] = _mtime_new
+    _force_new_files.add( path)
+
 
 def mtime_cache_mark_old( path):
     path = os.path.abspath( path)
@@ -321,6 +747,7 @@ def date_time( t=None):
         t = time.time()
     return time.strftime( "%F-%T", time.gmtime( t))
 
+
 def get_verbose( v):
     '''
     Returns <v> or default verbose settings if <v> is None.
@@ -329,11 +756,11 @@ def get_verbose( v):
         return 'de'
     return v
 
+
 def file_write( text, path, verbose=None, force=None):
     '''
-    If file <path> exists and contents are already <text>, does nothing.
-
-    Otherwise writes <text> to file <path>.
+    If file <path> exists and contents are already <text>, does
+    nothing. Otherwise writes <text> to file <path>.
 
     Will raise an exception if something goes wrong.
 
@@ -351,14 +778,15 @@ def file_write( text, path, verbose=None, force=None):
     
     if doit2:
         message = ''
-        if 'f' in verbose and not doit:
-            message += ' Forcing update of %s' % path
-        elif 'd' in verbose:
-            message += ' Updating %a' % path
+        if 'd' in verbose:
+            if doit:
+                message += f' Updating {path}'
+            else:
+                message += f' Forcing update of {path}'
         if message:
             log( message.strip())
         
-        path_temp = '%s-walk-temp' % path
+        path_temp = f'{path}-walk-temp'
         ensure_parent_dir( path)
         with open( path_temp, 'w') as f:
             f.write( text)
@@ -366,548 +794,16 @@ def file_write( text, path, verbose=None, force=None):
     
     else:
         message = ''
-        if 'F' in verbose and doit:
-            message += ' Forcing no update of %s' % path
-        elif 'D' in verbose:
-            message += ' Not updating %s' % path
+        if 'D' in verbose:
+            if doit:
+                message += f' Forcing no update of {path}'
+            else:
+                message += f' Not updating {path}'
         if message:
             log( message.strip())
 
 
-class CommandFailed( Exception):
-    '''
-    Result of running a command.
-    '''
-    def __init__( self, wait_status, text=None):
-        self.wait_status = wait_status
-        self.text = text
-
-    
-def system(
-        command,
-        walk_path,
-        verbose=None,
-        force=None,
-        description=None,
-        command_compare=None,
-        method=None,
-        out=None,
-        out_prefix='',
-        out_buffer=False,
-        ):
-    '''
-    Runs command unless stored info from previous run implies that the command
-    would not change output files.
-    
-    Returns:
-        Integer termination status if we run command.
-        Otherwise None.
-    command:
-        Command to run.
-    walk_path:
-        Name of generated walk file; this will contain information on what
-        files the command read and wrote.
-    verbose:
-        A string where the presence of particular characters controls what
-        diagnostics are generated:
-        
-            c   Show the command itself if we run the command.
-            d   Show command description if we run the command.
-            f   Show that we are forcing the command to be run.
-            m   Show generic message if we are running the command.
-            r   Show the reason for running the command.
-        
-        Upper-case versions of the above cause the equivalent messages to be
-        generated if we /don't/ run the command.
-    force:
-        If None (the default), we run the command unless walk file and mtimes
-        indicate it will make no changes.
-        
-        Otherwise if true (e.g. 1 or True) we always run the command; if false
-        (e.g. 0 or False) we never run the command.
-    description:
-        Text used by <verbose>'s 'd' option. E.g. 'Compiling foo.c'.
-    method:
-        None, 'preload' or 'trace'.
-
-        If None, we use default setting for the OS we are running on.
-
-        If 'trace' we use Linux strace or OpenBSD ktrace to find what file
-        operations the command used.
-
-        If 'preload' we include our own code using LD_PRELOAD to find calls to
-        open() etc.
-    command_compare:
-        If not None, should be callable taking two string commands, and return
-        non-zero if these commands differ significantly.
-
-        E.g. for gcc-style compilation commands this could ignore any -W* args
-        to avoid unnecessary recompilation caused by changes to warning flags
-        (unless -Werror is also used).
-    out:
-        Where the command's stdout and stderr go:
-            None:
-                If both out_prefix and out_buffer are false, the command's
-                output goes directly to the inherited stdout/stderr. Otherwise
-                it is sent (via a pipe) to our stdout.
-
-            A callable taking a single <text> param.
-
-            An object with .write() method taking a single <text> param.
-
-            An integer >= 0, used with os.write().
-
-            A subprocess module special value (should not be subprocess.PIPE)
-            such as subprocess.DEVNULL: passed directly to subprocess.Popen().
-    out_prefix:
-        If not None, prepended to each line sent to <out>.
-    out_buffer:
-        If true, we buffer up output and send to <out> in one call after
-        command has terminated.
-    '''
-    doit, reason = system_check( walk_path, command, command_compare)
-    return system_doit(
-            doit,
-            reason,
-            command,
-            walk_path,
-            verbose,
-            force,
-            description,
-            command_compare,
-            method,
-            out,
-            out_prefix,
-            out_buffer,
-            )
-
-def system_doit(
-        doit,
-        reason,
-        command,
-        walk_path,
-        verbose=None,
-        force=None,
-        description=None,
-        command_compare=None,
-        method=None,
-        out=None,
-        out_prefix='',
-        out_buffer=False,
-        ):
-    '''
-    Runs command if doit is true or force is true. Returns as system().
-    '''
-    verbose = get_verbose( verbose)
-    
-    if method is None:
-        if _osname == 'Linux':
-            # 'preload' doesn't work yet - seems like we don't intercept
-            # whatever function it is that gcc uses to open the output
-            # executable when linking.
-            #
-            method = 'trace'
-        elif _osname == 'OpenBSD':
-            # Both 'trace' and 'preload' currently appear to work, but 'trace'
-            # hasn't been tested that much so the default is 'preload'.
-            #
-            method = 'preload'
-        else:
-            assert 0
-    
-    doit2 = doit
-    if force is not None:
-        doit2 = force
-    if doit2:
-        # We always write None to .walk file before running the command,
-        # which can be used to detect when a command did not complete (e.g.
-        # because we were killed.
-        #
-        # This allows our diagnostics to differentiate between running a
-        # command because it has never been run before (no .walk file) and
-        # runnng a command because previous invocation did not complete
-        # or failed (zero-length .walk file).
-        #
-        ensure_parent_dir( walk_path)
-        with open( walk_path, 'wb') as f:
-            pickle.dump( None, f)
-        
-        strace_path = walk_path + '-1'
-        remove( strace_path)
-        
-        if method == 'preload':
-            command2 = '%s %s' % (_make_preload( strace_path), command)
-            #log( 'command2 is: %s' % command2)
-        elif method == 'trace':
-            if _osname == 'Linux':
-                command2 = ('strace'
-                        + ' -f'
-                        + ' -o ' + strace_path
-                        + ' -q'
-                        + ' -qq'
-                        + ' -e trace=%file'
-                        + ' ' + command
-                        )
-            elif _osname == 'OpenBSD':
-                command2 = 'ktrace -i -f %s -t cn %s' % (strace_path, command)
-            else:
-                assert 0
-        else:
-            assert 0
-        
-        message = _make_diagnostic( verbose, command, description, reason, force=not doit, notrun=False)
-        if message:
-            log( message)
-      
-        t_begin = time.time()
-        
-        e = _system(
-                command2,
-                throw=False,
-                out=out,
-                out_prefix=out_prefix,
-                out_buffer=out_buffer,
-                )
-        
-        t_end = time.time()
-        
-        if e:
-            if 'e' in verbose and 'c' not in verbose:
-                # We didn't output the command above, so output it now.
-                log( 'Command failed: %s' % command)
-            # Write error code to .walk file so next time we know the command
-            # failed.
-            with open( walk_path, 'wb') as f:
-                pickle.dump( e, f)
-
-        else:
-            # Command has succeeded so create the .walk file so that future
-            # invocations know whether the command should be run again.
-            #
-            if method == 'preload':
-                walk = _process_preload( command, strace_path, t_begin, t_end)
-            elif method == 'trace':
-                walk = _process_strace( command, strace_path, t_begin, t_end)
-            else:
-                assert 0
-            walk.write( walk_path)
-        
-        remove( strace_path)
-        
-    else:
-        message = _make_diagnostic( verbose, command, description, reason, force=doit, notrun=True)
-        if message:
-            log( message)
-        
-        e = None
-    
-    return e
-
-
-class Concurrent:
-    '''
-    Support for running commands concurrently.
-    
-    Usage:
-    
-        Instead of calling walk.system(), create a walk.Concurrent instance and
-        use its .system() method.
-
-        To wait until all scheduled tasks have completed, call .join().
-
-        Then to close down the internal threads, call .end().
-        
-    self.num_commands is number of times self.system() was called.
-
-    self.num_commands_run is number of times that self.system() actually ran
-    the specified command.
-    '''
-    def __init__( self, num_threads, keep_going=False, max_load_average=None):
-        '''
-        num_threads:
-            Number of threads to run. (If zero, out .system() methods simply
-            calls walk.system() directly.)
-        keep_going:
-            If false (the default) we raise exception from .system() and
-            .join() if a previous command has failed. Otherwise new commands
-            will be scheduled regardless.
-            
-        Errors from scheduled commands can be retreived using .get_errors().
-        '''
-        self.num_threads = num_threads
-        self.keep_going = keep_going
-        self.max_load_average = max_load_average
-        self.num_commands = 0
-        self.num_commands_run = 0
-        self.queue = queue.Queue()# maxsize=1)
-        self.errors = queue.Queue()
-        
-        # We use .signal to allow .join() to effectively wait for either of
-        # .queue ending or .errors having items. Every time something reads
-        # from .queue or writes to .errors it should also write to .signal.
-        #
-        self.signal = queue.Queue()
-        self.threads = []
-        for i in range( self.num_threads):
-            thread = threading.Thread( target=self._thread_fn, daemon=True)
-            self.threads.append( thread)
-            thread.start()
-    
-    def _signal( self):
-        self.signal.put(None)
-        
-    def _thread_fn( self):
-        while 1:
-            item = self.queue.get()
-            
-            if item is None:
-                self.queue.task_done()
-                self._signal()
-                return
-                
-            if not self.keep_going and not self.errors.empty():
-                # Error has occurred, so don't process tasks.
-                self.queue.task_done()
-                self._signal()
-                continue
-            
-            if self.max_load_average is not None:
-                it = 0
-                while 1:
-                    current_load_average = os.getloadavg()[0]
-                    if current_load_average < self.max_load_average:
-                        break
-                    if it % 5 == 0:
-                        log( f'[Waiting for load_average={current_load_average:.1f} to reduce below {self.max_load_average:.1f}...]')
-                    time.sleep(1)
-                    it += 1
-            
-            (
-                command,
-                walk_path,
-                verbose,
-                force,
-                description,
-                command_compare,
-                out,
-                out_prefix,
-                out_buffer,
-            ) = item
-            if isinstance(force, tuple):
-                doit, reason, force = force
-            else:
-                doit, reason = system_check( walk_path, command, command_compare)
-            
-            e = system_doit(
-                    doit,
-                    reason,
-                    command,
-                    walk_path,
-                    verbose,
-                    force,
-                    description,
-                    command_compare,
-                    None,   # method
-                    out,
-                    out_prefix,
-                    out_buffer,
-                    )
-            if e is not None:
-                self.num_commands_run += 1
-            if e:
-                #log( f'*** appending error e={e} walk_path={walk_path}')
-                self.errors.put( (command, walk_path, e))
-            self.queue.task_done()
-            self._signal()
-        
-    def _raise_if_errors( self):
-        if self.keep_going:
-            #log( f'*** keep_going is true. self.errors.empty()={self.errors.empty()}')
-            return
-        if not self.errors.empty():
-            #log( f'raising exception')
-            raise Exception( 'task(s) failed')
-    
-    def system_r( self,
-            command,
-            walk_path,
-            verbose=None,
-            force=None,
-            description=None,
-            command_compare=None,
-            out=None,
-            out_prefix=None,
-            out_buffer=None,
-            ):
-        '''
-        Like system() but calls system_check() and returns (doit, reason)
-        immediately.
-
-        If doit or force are true we schedule the command to be run on <self>.
-        '''
-        self.num_commands += 1
-        self._raise_if_errors()
-        doit, reason = system_check( walk_path, command, command_compare)
-        #log( f'system_check() returned doit={doit} walk_path={walk_path}')
-        doit2 = doit
-        if force:
-            doit2 = force
-        if doit2 and self.num_threads:
-            self.queue.put(
-                (
-                    command,
-                    walk_path,
-                    verbose,
-                    (doit, reason, force),
-                    description,
-                    command_compare,
-                    out,
-                    out_prefix,
-                    out_buffer,
-                )
-                )
-            return doit, reason, None
-        else:
-            # If doit is false this will output diagnostics.
-            e = system_doit(
-                    doit,
-                    reason,
-                    command,
-                    walk_path,
-                    verbose,
-                    force,
-                    description,
-                    command_compare,
-                    out=out,
-                    out_prefix=out_prefix,
-                    out_buffer=out_buffer,
-                    )
-            return doit, reason, e
-            
-    def system( self,
-            command,
-            walk_path,
-            verbose=None,
-            force=None,
-            description=None,
-            command_compare=None,
-            out=None,
-            out_prefix=None,
-            out_buffer=None,
-            ):
-        '''
-        Schedule a command to be run. This will call walk.system() on one of
-        our internal threads.
-        
-        Will raise an exception if an earlier command failed (unless we were
-        constructed with keep_going=true).
-        
-        Will block until a thread is free to handle the new command, or for
-        load average to reduce below self.max_load_average.
-        '''
-        self._raise_if_errors()
-        
-        self.num_commands += 1
-        if self.num_threads:
-            self.queue.put(
-                    (
-                    command,
-                    walk_path,
-                    verbose,
-                    force,
-                    description,
-                    command_compare,
-                    out,
-                    out_prefix,
-                    out_buffer,
-                    ))
-        else:
-            e = system(
-                    command,
-                    walk_path,
-                    verbose,
-                    force,
-                    description,
-                    command_compare,
-                    out=out,
-                    out_prefix=out_prefix,
-                    out_buffer=out_buffer,
-                    )
-            if e:
-                self.errors.put( (command, walk_path, e))
-            if e is not None:
-                self.num_commands_run += 1
-    
-    def join( self):
-        '''
-        Waits until all current tasks have finished.
-        
-        Will raise an exception if an earlier command failed (unless we were
-        constructed with keep_going=true).
-        '''
-        have_sent_nones = False
-        while 1:
-            if self.queue.empty():
-                self.queue.join()
-                break
-            if not self.errors.empty():
-                if not have_sent_nones:
-                    # Tell each thread to stop.
-                    have_sent_nones = True
-                    for i in range( self.num_threads):
-                        self.queue.put( None)
-            self.signal.get()
-        self._raise_if_errors()
-    
-    def join_check( self):
-        '''
-        If all tasks have finished, returns True, else returns False.
-        
-        Will raise an exception if an earlier command failed (unless we were
-        constructed with keep_going=true).
-        '''
-        self._raise_if_errors()
-        if not self.queue.empty():
-            return False
-        self.join()
-        return True
-    
-    def get_errors( self):
-        '''
-        Returns list of errors from completed tasks.
-
-        These errors will not be returned again by later calls to
-        .get_errors().
-
-        Each returned error is (command, walk_path, e).
-        '''
-        ret = []
-        while 1:
-            if self.errors.empty():
-                break
-            e = self.errors.get()
-            ret.append( e)
-        return ret
-    
-    def end( self):
-        '''
-        Tells all threads to terminate and returns when they have terminated.
-        '''
-        for i in range( self.num_threads):
-            self.queue.put( None)
-        self.queue.join()
-        for t in self.threads:
-            t.join()
-
-
-
-#
-# Everything below here is internal implementation details, and not for
-# external use.
-#
-
-
-def _make_diagnostic( verbose, command, description, reason, force, notrun):
+def _make_diagnostic( verbose, command, description, reason, doit):
     '''
     Returns diagnostic text, such as:
     
@@ -922,21 +818,24 @@ def _make_diagnostic( verbose, command, description, reason, force, notrun):
         Alternative description of the command.
     reason:
         The reason for (not) running the command.
-    force:
-        Whether we are forcing (not) running.
-    notrun:
-        If true, we are not running the command and we reverse the case of
+    doit:
+        If false, we are not running the command and we reverse the case of
         <verbose> when checking for flags.
     '''
+    if isinstance( reason, list) and len( reason) == 1 and reason[0]:
+        reason = reason[0]
     notrun_text = ''
-    if notrun:
+    if not doit:
         verbose = verbose.swapcase()
         notrun_text = ' not'
     
     message_tail = ''
     if 'd' in verbose and description:
         # Show description of command.
-        message_tail += '(%s)' % description
+        if 'c' in verbose:
+            message_tail += f'({description})'
+        else:
+            message_tail += description
     if 'c' in verbose:
         # Show the command itself.
         if message_tail:
@@ -944,21 +843,18 @@ def _make_diagnostic( verbose, command, description, reason, force, notrun):
         message_tail += command
 
     message_head = ''
-    if 'f' in verbose and force:
-        # Show that we are forcing run/not run of command.
-        message_head += ' forcing%s running of command' % notrun_text
     if 'r' in verbose:
         # Show reason for running the command.
         if not message_head:
-            if notrun:
-                message_head += '%s running command' % notrun_text
-            else:
+            if doit:
                 message_head += 'running command'
+            else:
+                message_head += f'{notrun_text} running command' 
         if reason:
-            message_head += ' because %s' % reason
+            message_head += f' because {reason}'
     if 'm' in verbose and not message_head:
         # Show generic message.
-        message_head += '%s running command' % notrun_text_initial
+        message_head += f'{notrun_text_initial} running command'
     message_head = message_head.strip()
     if message_head:
         message_head = message_head[0].upper() + message_head[1:]
@@ -970,7 +866,7 @@ def _make_diagnostic( verbose, command, description, reason, force, notrun):
         message += message_tail
     
     if 0:
-        log( f'verbose={verbose} command={command!r} description={description!r} reason={reason!r}, force={force} notrun={notrun}: returning: {message!r}')
+        log( f'verbose={verbose} command={command!r} description={description!r} reason={reason!r} doit={doit}: returning: {message!r}')
     return message
 
 
@@ -979,7 +875,7 @@ def _system(
         out=None,
         capture=False,
         throw=True,
-        encoding='latin_1',
+        encoding='utf-8',
         encoding_errors='strict',
         out_prefix='',
         out_buffer=False,
@@ -1012,6 +908,10 @@ def _system(
             returned information.
         throw:
             If true, we raise a CommandFailed exception if command failed.
+        encoding:
+            The encoding to use when decoding child output. Ignored if false.
+        encoding_errors:
+            The codecs module's 'errors' param if <encoding> is specified.
         out_prefix:
             If not None, prepended to each line sent to <out>. Not included
             in output returned if <capture> is true.
@@ -1092,27 +992,32 @@ def _system(
     return wait_status
 
 
-def time_load_all( root, p):
+def time_load_all( root):
+    '''
+    Timing test. Processes all .walk files within <root> and outputs timing
+    information.
+    '''
     t = time.time()
-    suffix = '.walkp' if p else '.walk'
     i = 0
     for it in range(1):
         for dirpath, dirnames, filenames in os.walk( root):
             for filename in filenames:
-                if filename.endswith( suffix):
+                if filename.endswith( '.walk'):
                     path = os.path.join( dirpath, filename)
                     i += 1
-                    if i % 10000 == 0:
-                        log( f'p={p} i={i} {path}')
-                    if p:
-                        system_check_p( path, None, lambda: 0)
-                    else:
-                        system_check( path, None, lambda: 0)
+                    if i % 100 == 0:
+                        log( f'i={i} {path}')
+                    system_check(
+                            path, None,
+                            lambda command1,
+                            command2: 0,
+                            use_hash,
+                            )
     t = time.time() - t
-    log( f'p={p} t={t} i={i}')
+    log( f't={t} i={i}')
 
 
-def system_check( walk_path, command, command_compare=None):
+def system_check( walk_path, command, command_compare=None, force=None, use_hash=True):
     '''
     Looks at information about previously opened files and decides whether we
     can avoid running the specified command. This is run every time the user
@@ -1127,7 +1032,9 @@ def system_check( walk_path, command, command_compare=None):
         If not None, should be callable taking two string commands, and return
         non-zero if these commands differ significantly. E.g. for gcc commands
         this could ignore any -W* args to avoid unnecessary recompilation
-        caused by changes to warning flags.
+        caused by changes only to warning flags.
+    use_hash:
+        If true, we look at md5 of files instead of mtime.
 
     Returns (doit, reason):
         doit:
@@ -1135,12 +1042,15 @@ def system_check( walk_path, command, command_compare=None):
         explanation:
             Text description of why <doit> is set to true/false.
     '''
+    if force is not None:
+        if force:
+            return True, 'Force running of command'
+        else:
+            return False, 'Force not running of command'
+    
     reason = []
     verbose = 0
     #verbose = walk_path.endswith('/main.cxx,clang,debug,opt,osg.o.walk')
-    
-    openbsd = _osname == 'OpenBSD'
-    linux = _osname == 'Linux'
     
     try:
         f = open( walk_path, 'rb')
@@ -1159,7 +1069,10 @@ def system_check( walk_path, command, command_compare=None):
             reason.append( f'Previous build interrupted')
             return doit, reason
     if w is None or isinstance(w, int):
-        reason.append( f'Previous build failed: {w}')
+        r = 'Previous build failed'
+        if not w is None:
+            r += f' ({w})'
+        reason.append( r)
         doit = True
         return doit, reason
         
@@ -1170,15 +1083,15 @@ def system_check( walk_path, command, command_compare=None):
     if diff:
         if 0 or verbose:
             log( 'command has changed:')
-            log( '    from %s' % w.command)
-            log( '    to   %s' % command)
+            log( f'    from {w.command}')
+            log( f'    to   {command}')
         return True, 'command has changed'
 
-    # We want to find oldest file that was opened for writing by previous
-    # invocation of this command, and the newest file that was opened for
-    # reading. If the current mtime of the newest read file is older than
-    # the current mtime of the oldest written file, then we don't need to
-    # run the command again.
+    # If use_hash is alse, we want to find oldest file that was opened for
+    # writing by previous invocation of this command, and the newest file that
+    # was opened for reading. If the current mtime of the newest read file is
+    # older than the current mtime of the oldest written file, then we don't
+    # need to run the command again.
     #
 
     oldest_write = None
@@ -1202,9 +1115,8 @@ def system_check( walk_path, command, command_compare=None):
         if verbose:
             log(f'ret={ret} read_or_hash={read_or_hash} write={write}: {path}')
         
-        # Previous invocation of command opened <path>, so we need to
-        # look at its mtime and update newest_read or oldest_write
-        # accordingly.
+        # Previous invocation of command opened <path>, so we need to look at
+        # its hash/mtime and update newest_read or oldest_write accordingly.
 
         # Just comparing with /home makes a surprisingly large difference
         # to the nothing-to-do case. E.g. for Flightgear it reduces time
@@ -1234,11 +1146,11 @@ def system_check( walk_path, command, command_compare=None):
             #if path.startswith( '/usr/'):
             #    continue
 
-            if openbsd and path == '/var/run/ld.so.hints':
+            if _openbsd and path == '/var/run/ld.so.hints':
                 # This is always new, so messes things up.
                 continue
 
-            if linux and path.startswith( '/etc/ld.so'):
+            if _linux and path.startswith( '/etc/ld.so'):
                 # This is sometimes updated (maybe after apt install?), so
                 # messes things up.
                 continue
@@ -1249,7 +1161,7 @@ def system_check( walk_path, command, command_compare=None):
 
         #if 0 and path.startswith( os.getcwd()):
         if verbose:
-            log( 't=%s ret=%s read_or_hash=%s write=%s path: %s' % (date_time(t), ret, read_or_hash, write, path))
+            log( f't={date_time(t)} ret={ret} read_or_hash={read_or_hash} write={write} path: {path}')
 
         if read_or_hash and not write and ret < 0:
             # Open for reading failed last time.
@@ -1259,24 +1171,20 @@ def system_check( walk_path, command, command_compare=None):
                 # File exists, so it might open successfully this time,
                 # so pretend it is new.
                 #
-                if 0: log( 'forcing walk_path t=%s walk_path=%s path=%s' % (
-                        date_time( mtime( walk_path)),
-                        walk_path,
-                        path,
-                        ))
+                if 0: log( f'forcing walk_path t={date_time( mtime( walk_path))} walk_path={walk_path} path={path}')
                 newest_read = time.time()
                 newest_read_path = path
         if read_or_hash and ret >= 0:
             # Open for reading succeeded last time.
             if verbose:
                 log(f'opened for reading succeeded last time: {path}')
-            if g_use_hash and (isinstance(read_or_hash, bytes) or read_or_hash == -1):
+            if use_hash and (isinstance(read_or_hash, bytes) or read_or_hash == -1):
                 # read_or_hash is hash digest.
                 hash_ = file_hash(path)
                 #log(f'path={path}')
                 #log(f'    read_or_hash: {read_or_hash}')
                 #log(f'    hash_:     {hash_}')
-                if hash_ != read_or_hash:
+                if hash_ != read_or_hash or path in _force_new_files:
                     #log(f'hash has changed: {path}')
                     # Keep track of newest modified input file to include in
                     # diagnostics.
@@ -1292,7 +1200,7 @@ def system_check( walk_path, command, command_compare=None):
                 use_mtime = True
             
             # Currently we always look at mtime even if we also use hash, but
-            # this could be 'if not g_use_hash: ...'.
+            # this could be 'if not use_hash: ...'.
             if 1:
                 #log(f'read_or_hash not hash: {read_or_hash}')
                 if t == -1:
@@ -1321,8 +1229,8 @@ def system_check( walk_path, command, command_compare=None):
                 oldest_write = 0
                 oldest_write_path = path
 
-    #log( 'oldest_write: %s %s' % (date_time(oldest_write), oldest_write_path))
-    #log( 'newest_read:  %s %s' % (date_time(newest_read), newest_read_path))
+    #log( f'oldest_write: {date_time(oldest_write)} {oldest_write_path}')
+    #log( f'newest_read:  {date_time(newest_read)} {newest_read_path}')
 
     # Note that don't run command if newest read and oldest write have the
     # same mtimes, just in case they are the same file.
@@ -1344,24 +1252,18 @@ def system_check( walk_path, command, command_compare=None):
         doit = True
         reason.append( f'Output file not present:{oldest_write_path}')
     elif newest_read > oldest_write:
-        if g_use_hash and not use_mtime:
+        if use_hash and not use_mtime:
             # If we get here, no hash changed was detected, so we will not be
             # rebuilding, but we would have rebuilt if relying on mtimes.
             reason.append( f'hash unchanged: {newest_read_path}')
             #log(f'Ignoring newer input because hash unchanged: {newest_read_path}')
         else:
             doit = True
-            reason.append( 'Input is newer: %r' % (
-                    os.path.relpath( newest_read_path)
-                    #oldest_write_path,
-                    ))
+            reason.append( f'Input is newer: {os.path.relpath( newest_read_path)!r}')
     else:
         doit = False
         if newest_read_path:
-            reason.append( 'Newest input %r not newer then oldest output %r' % (
-                    os.path.relpath( newest_read_path),
-                    os.path.relpath( oldest_write_path),
-                    ))
+            reason.append( f'Newest input {os.path.relpath( newest_read_path)!r} not newer then oldest output {os.path.relpath( oldest_write_path)!r}')
         else:
             reason.append( 'No input hash has changed')
 
@@ -1371,11 +1273,140 @@ def system_check( walk_path, command, command_compare=None):
         log( f'returning {doit} {reason}')
     return doit, reason
 
-_osname = os.uname()[0]
+
+def system_doit(
+        doit,
+        reason,
+        command,
+        walk_path,
+        verbose=None,
+        description=None,
+        command_compare=None,
+        method=None,
+        out=None,
+        out_prefix='',
+        out_buffer=False,
+        ):
+    '''
+    Runs command if <doit> is true.
+    
+    May output diagnostics whether or not <doit> is true, depending on
+    <verbose>.
+    
+    Returns as walk.system().
+    
+    Args:
+        doit:
+            If true, we run the command.
+        reason:
+            Used in diagnostics.
+        ...
+            Other args are same as in walk.system().
+    '''
+    verbose = get_verbose( verbose)
+    
+    if not doit:
+        message = _make_diagnostic( verbose, command, description, reason, doit)
+        if message:
+            log( message)
+        return
+    
+    if method is None:
+        if _linux:
+            # 'preload' doesn't work yet - seems like we don't intercept
+            # whatever function it is that gcc uses to open the output
+            # executable when linking.
+            #
+            method = 'trace'
+        elif _openbsd:
+            # Both 'trace' and 'preload' currently appear to work, but 'trace'
+            # hasn't been tested that much so the default is 'preload'.
+            #
+            method = 'preload'
+        else:
+            assert 0
+    
+    # We always write None to .walk file before running the command,
+    # which can be used to detect when a command did not complete (e.g.
+    # because we were killed.
+    #
+    # This allows our diagnostics to differentiate between running a
+    # command because it has never been run before (no .walk file) and
+    # runnng a command because previous invocation did not complete
+    # or failed (.walk file contains None).
+    #
+    ensure_parent_dir( walk_path)
+    with open( walk_path, 'wb') as f:
+        pickle.dump( None, f)
+
+    strace_path = walk_path + '-1'
+    remove( strace_path)
+
+    if method == 'preload':
+        command2 = f'{_make_preload( strace_path)} {command}'
+        #log( f'command2 is: {command2}')
+    elif method == 'trace':
+        if _linux:
+            command2 = ('strace'
+                    + ' -f'
+                    + ' -o ' + strace_path
+                    + ' -q'
+                    + ' -qq'
+                    + ' -e trace=%file'
+                    + ' ' + command
+                    )
+        elif _openbsd:
+            command2 = f'ktrace -i -f {strace_path} -t cn {command}'
+        else:
+            assert 0
+    else:
+        assert 0
+
+    message = _make_diagnostic( verbose, command, description, reason, doit=True)
+    if message:
+        log( message)
+
+    t_begin = time.time()
+
+    e = _system(
+            command2,
+            throw=False,
+            out=out,
+            out_prefix=out_prefix,
+            out_buffer=out_buffer,
+            )
+
+    t_end = time.time()
+
+    if e:
+        if 'e' in verbose and 'c' not in verbose:
+            # We didn't output the command above, so output it now.
+            log( f'Command failed: {command}')
+        # Write error code to .walk file so next time we know the command
+        # failed.
+        with open( walk_path, 'wb') as f:
+            pickle.dump( e, f)
+
+    else:
+        # Command has succeeded so create the .walk file so that future
+        # invocations know whether the command should be run again.
+        #
+        if method == 'preload':
+            walk = _process_preload( command, strace_path, t_begin, t_end)
+        elif method == 'trace':
+            walk = _process_trace( command, strace_path, t_begin, t_end)
+        else:
+            assert 0
+        walk.write( walk_path)
+
+    remove( strace_path)
+    
+    return e
+
 
 class WalkFile:
     '''
-    Creates a walk file, used by code that parses strace or preload output.
+    Creates a walk file; used by code that parses strace or preload output.
     '''
     def __init__( self, command, t_begin, t_end, verbose=False):
         self.command = command
@@ -1385,8 +1416,11 @@ class WalkFile:
         self.verbose = verbose
     
     def add_open( self, ret, path, r, w):
+        '''
+        Add an attempt to open a file.
+        '''
         if self.verbose:
-            print('open: ret=%s r=%s w=%s path=%s' % (ret, r, w, path))
+            print( f'open: ret={ret} r={r} w={w} path={path}')
         path = os.path.abspath( path)
         mtime_cache_clear( path)
         # Look for earlier mention of <path>.
@@ -1405,20 +1439,26 @@ class WalkFile:
                 self.path2info[ path] = ret, r, w
     
     def add_delete( self, path):
+        '''
+        Add deletion of a file.
+        '''
         if self.verbose:
-            print('delete: path=%s' % path)
+            print( f'delete: path={path}')
         path = os.path.abspath( path)
         mtime_cache_clear( path)
         self.path2info.pop( path, None)
     
     def add_rename( self, path_from, path_to):
+        '''
+        Add a rename.
+        '''
         if self.verbose:
-            print('rename: path_from=%s path_to=%s' % (path_from, path_to))
+            print( f'rename: path_from={path_from} path_to={path_to}')
         path_from = os.path.abspath( path_from)
         path_to = os.path.abspath( path_to)
         mtime_cache_clear( path_from)
         mtime_cache_clear( path_to)
-        if 0: log( 'rename: %s => %s' % (path_from, path_to))
+        if 0: log( f'rename: {path_from} => {path_to}')
         prev = self.path2info.get( path_from)
         ok = False
         if prev:
@@ -1427,8 +1467,7 @@ class WalkFile:
                 ok = True
                 del self.path2info[ path_from]
                 self.path2info[ path_to] = prev_ret, prev_r, prev_w
-                if 0: log( 'rename %s => %s. have set %s to ret=%s r=%s w=%s' % (
-                        path_from, path_to, path_to, prev_ret, prev_r, prev_w))
+                if 0: log( f'rename {path_from} =>{path_to}. have set {path_to} to ret={prev_ret} r={prev_r} w={prev_w}')
         if not ok:
             # Not much we can do here. maybe mark the command as always run?
             self.path2info.pop( path_from, None)
@@ -1436,7 +1475,7 @@ class WalkFile:
     
     def write( self, walk_path):
         '''
-        Write to pickle file.
+        Write all added items to pickle file.
         '''
         walk_path_ = walk_path + '-'
         # Find md5 of input files.
@@ -1449,20 +1488,17 @@ class WalkFile:
         os.rename( walk_path_, walk_path)
         
 
-def _process_strace( command, strace_path, t_begin, t_end):
+def _process_trace( command, strace_path, t_begin, t_end):
     '''
     Analyses info in strace (or ktrace on OpenBSD) output file <strace_path>,
     and returns a WalkFile.
-
-    We use a temp file and rename, to ensure that we are safe against crashing
-    or SIGKILL etc.
     '''
     walk = WalkFile( command, t_begin, t_end)
     
-    if _osname == 'Linux':
+    if _linux:
         with open( strace_path) as f:
             for line in f:
-                #log( 'line is: %r' % line)
+                #log( f'line is: {line!r}')
                 m = None
                 if not m:
                     m = re.match( '^[0-9]+ +(openat)[(]([A-Z0-9_]+), "([^"]*)", ([^)]+)[)] = ([0-9A-Z-]+).*\n$', line)
@@ -1493,20 +1529,20 @@ def _process_strace( command, strace_path, t_begin, t_end):
                     
                     # maybe do this only if <write> is true?
                     if 0:
-                        log( 'syscall=%s ret=%s. write=%s: %s' % (syscall, ret, write, path))
+                        log( f'syscall={syscall} ret=%{ret}. write={write}: {path}')
                     walk.add_open( ret, path, read, write)
                     continue
                 
                 m = re.match( '^[0-9]+ +rename[(]"([^"]*)", "([^"]*)"[)] = ([0-9A-Z-]+).*\n$', line)
                 if m:
-                   # log( 'found rename: %r' % line)
+                   # log( f'found rename: {line!r}')
                     ret = int( m.group(3))
                     if ret == 0:
                         from_ = m.group(1)
                         to_ = m.group(2)
                         walk.add_rename( from_, to_)
                 
-    elif _osname == 'OpenBSD':
+    elif _openbsd:
         # Not sure how reliable this is. The output from kdump seems to have
         # two lines per syscall, with NAMI lines in-between, but sometimes
         # other syscall lines can appear inbetween too, which could maybe cause
@@ -1515,7 +1551,7 @@ def _process_strace( command, strace_path, t_begin, t_end):
         # [Luckily the preload library approach seems to work on OpenBSD.]
         #
         strace_path2 = strace_path + '-'
-        e = os.system( 'kdump -n -f %s >%s' % (strace_path, strace_path2))
+        e = os.system( f'kdump -n -f {strace_path} >{strace_path2}')
         assert not e
         write_items = []
         os.remove( strace_path)
@@ -1537,7 +1573,7 @@ def _process_strace( command, strace_path, t_begin, t_end):
                         line = f.readline()
                         if not line:
                             raise Exception('expecting path, but eof')
-                        m = re.match( '^ *[0-9]+ +[^ ]+ +RET +%s ([x0-9-]+)' % syscall, line)
+                        m = re.match( f'^ *[0-9]+ +[^ ]+ +RET +{syscall} ([x0-9-]+)', line)
                         if m:
                             ret = m.group( 1)
                             if ret.startswith( '0x'):
@@ -2083,10 +2119,6 @@ int open64( const char* path, int oflag)
 def _process_preload( command, walk_path0, t_begin, t_end):
     '''
     Takes file created by preload library, and processes it into a walk file.
-
-    The main thing we do is to handle sequences of calls where a file is opened
-    for writing, but then renamed or deleted - in this case it's important to
-    omit this file from the list of output files.
     '''
     walk = WalkFile( command, t_begin, t_end)
     
@@ -2095,12 +2127,12 @@ def _process_preload( command, walk_path0, t_begin, t_end):
         path2line = dict()
         
         for i, line in enumerate(lines):
-            #log( 'looking at line: %r' % line)
+            #log( f'looking at line: {line!r}')
             if not line:
                 continue
             if line.startswith( 'r'):
                 # rename
-                #log( 'rename: %r' % line)
+                #log( f'rename: {line!r}')
                 _, from_, to_ = line.split( ' ')
                 walk.add_rename( from_, to_)
             elif line.startswith( 'd'):
@@ -2118,14 +2150,14 @@ def _process_preload( command, walk_path0, t_begin, t_end):
     
     return walk
 
-import threading
+
 _make_preload_up_to_date = False
 _make_preload_lock = threading.Lock()
 
 def _make_preload( walk_file):
     '''
-    Ensures our ldpreload library is up to date, and returns string to be used
-    as a prefix for the command, setting LD_PRELOAD etc.
+    Ensures our ldpreload library in /tmp is up to date, and returns string to
+    be used as a prefix for the command, setting LD_PRELOAD etc.
     '''
     global _make_preload_up_to_date
     
@@ -2137,29 +2169,27 @@ def _make_preload( walk_file):
             if not _make_preload_up_to_date:
                 file_write( _preload_c, path_c)
                 if mtime( path_c, 0) > mtime( path_lib, 0):
-                    ldl = '-ldl' if _osname == 'Linux' else ''
-                    command = 'cc -g -W -Wall -shared -fPIC %s -o %s %s' % (
-                            ldl,
-                            path_lib,
-                            path_c,
-                            )
-                    #log( 'building preload library with: %s' % command)
+                    ldl = '-ldl' if _linux else ''
+                    command = f'cc -g -W -Wall -shared -fPIC {ldl} -o {path_lib} {path_c}'
+                    #log( f'building preload library with: {command}')
                     e = os.system( command)
                     assert not e, 'Failed to build preload library.'
                 _make_preload_up_to_date = True
     
-    return 'LD_PRELOAD=%s WALK_preload_out=%s' % (path_lib, walk_file)
+    return f'LD_PRELOAD={path_lib} WALK_preload_out={walk_file}'
 
 
-def _do_tests(method=None):
+def _do_test( use_hash, method):
     '''
-    Runs some very simple tests.
+    Runs some tests.
     
+    use_hash:
+        Passed directly to walk.system().
     method:
         Passed directly to walk.system(), so controls whether we use preload or
         trace.
     '''
-    with LogPrefixScope( f'test method={method}: '):
+    with LogPrefixScope( f'test method={method} use_hash={use_hash}: '):
         log( 'Running tests...')
 
         build_c = 'walk_test_foo.c'
@@ -2167,16 +2197,16 @@ def _do_tests(method=None):
         build_exe = './walk_test_foo.exe'
         build_walkfile = f'{build_exe}.walk'
 
-        w = 'walk_test_rename.walk'
-        a = 'walk_test_rename_a'
-        b = 'walk_test_rename_b'
-        c = 'walk_test_rename_c'
+        rename_w = 'walk_test_rename.walk'
+        rename_a = 'walk_test_rename_a'
+        rename_b = 'walk_test_rename_b'
+        rename_c = 'walk_test_rename_c'
         
+        t = time.time()
         try:
             # Testing with compilation.
             #
             with LogPrefixScope( 'compilation: '):
-            
                 file_write( '''
                         #include "walk_test_foo.h"
                         int main(){ return 0;}
@@ -2197,36 +2227,37 @@ def _do_tests(method=None):
 
                 # Build executable.
                 log( '== doing initial build')
-                e = system( command, build_walkfile, verbose='cderR', out=log, out_prefix='    ', method=method)
+                e = system( command, build_walkfile, verbose='cderR', out=log, out_prefix='    ', method=method, use_hash=use_hash)
                 assert not e
                 assert os.path.isfile( build_exe)
                 assert not os.system( build_exe)
                 assert os.path.isfile( build_walkfile)
 
-                # Check rebuild does nothing.
                 log( '== testing rebuild with no changes')
                 t = mtime( build_exe)
                 time.sleep(1)
                 mtime_cache_clear()
-                e = system( command, build_walkfile, verbose='cderR', out=log, out_prefix='    ', method=method)
+                e = system( command, build_walkfile, verbose='cderR', out=log, out_prefix='    ', method=method, use_hash=use_hash)
                 assert e is None
                 t2 = mtime( build_exe)
                 assert t2 == t, f'{date_time(t)} => {date_time(t2)}'
 
-                # Check rebuild with updated header updates executable.
                 log( '== testing rebuild with modified header')
                 mtime_cache_clear()
                 os.system( f'touch {build_h}')
-                e = system( command, build_walkfile, verbose='cderR', out=log, out_prefix='    ', method=method)
+                e = system( command, build_walkfile, verbose='cderR', out=log, out_prefix='    ', method=method, use_hash=use_hash)
                 t2 = mtime( build_exe)
-                assert e == None
-                assert t2 == t
+                if use_hash:
+                    assert e is None
+                    assert t2 == t
+                else:
+                    assert e == 0
+                    assert t2 > t
 
-                # Check rebuild with updated header updates executable.
                 log( '== testing rebuild with modified header')
                 mtime_cache_clear()
                 os.system( f'echo >> {build_h}')
-                e = system( command, build_walkfile, verbose='cderR', out=log, out_prefix='    ', method=method)
+                e = system( command, build_walkfile, verbose='cderR', out=log, out_prefix='    ', method=method, use_hash=use_hash)
                 t2 = mtime( build_exe)
                 assert e == 0
                 assert t2 > t
@@ -2235,7 +2266,7 @@ def _do_tests(method=None):
                 log( f'== running command after removing {build_exe}')
                 mtime_cache_clear()
                 os.system(f'rm {build_exe}')
-                e = system( command, build_walkfile, verbose='derR', out_prefix='    ', method=method)
+                e = system( command, build_walkfile, verbose='derR', out_prefix='    ', method=method, use_hash=use_hash)
                 assert e == 0, f'e={e}'
 
             with LogPrefixScope( 'rename: '):
@@ -2246,100 +2277,92 @@ def _do_tests(method=None):
                 # the creation of an output file is atomic.
                 #
                 log( '=== testing rename')
-                w = 'walk_test_rename.walk'
-                a = 'walk_test_rename_a'
-                b = 'walk_test_rename_b'
-                c = 'walk_test_rename_c'
-                remove( w)
-                remove( a)
-                remove( b)
+                t = time.time()
+                remove( rename_w)
+                remove( rename_a)
+                remove( rename_b)
                 mtime_cache_clear()
-                os.system( f'touch {a}')
+                os.system( f'touch {rename_a}')
                 # This command is implemented by this python script itself. It reads
-                # from a, writes to b, then renames b to c.
+                # from rename_a, writes to rename_b, then renames rename_b to rename_c.
                 #
-                command = f'{sys.argv[0]} --test-abc {a} {b} {c}'
+                command = f'{sys.argv[0]} --test-abc {rename_a} {rename_b} {rename_c}'
                 log( f'command is: {command}')
 
                 log( '')
                 log( '== running command for first time')
                 mtime_cache_clear()
-                e = os.system( f'touch {a}')
-                e = system( command, w, verbose='derR', out_prefix='    ', method=method)
+                e = os.system( f'touch {rename_a}')
+                e = system( command, rename_w, verbose='derR', out_prefix='    ', method=method, use_hash=use_hash)
                 #os.system( 'ls -lt|head')
                 assert e == 0, f'e={e}'
 
                 log( '')
                 log( '== running command again')
                 mtime_cache_clear()
-                e = system( command, w, verbose='derR', out_prefix='    ', method=method)
+                e = system( command, rename_w, verbose='derR', out_prefix='    ', method=method, use_hash=use_hash)
                 #os.system( 'ls -lt|head')
                 assert e is None, f'e={e}'
 
                 log( '')
-                log( f'== running command after touching {a}')
+                log( f'== running command after touching {rename_a}')
                 mtime_cache_clear()
-                e = os.system( f'touch {a}')
-                e = system( command, w, verbose='derR', out_prefix='    ', method=method)
+                e = os.system( f'touch {rename_a}')
+                e = system( command, rename_w, verbose='derR', out_prefix='    ', method=method, use_hash=use_hash)
                 #os.system( 'ls -lt|head')
-                assert e is None, f'e={e}'
+                if use_hash:
+                    assert e is None, f'e={e}'
+                else:
+                    assert e == 0, f'e={e}'
 
                 log( '')
-                log( f'== running command after touching {a}')
+                log( f'== running command after touching {rename_a}')
                 mtime_cache_clear()
-                e = os.system( f'echo >> {a}')
-                e = system( command, w, verbose='derR', out_prefix='    ', method=method)
+                e = os.system( f'echo >> {rename_a}')
+                e = system( command, rename_w, verbose='derR', out_prefix='    ', method=method, use_hash=use_hash)
                 #os.system( 'ls -lt|head')
                 assert e == 0, f'e={e}'
+            
+            t = time.time() - t
+            log( f'tests took {t:.2f}s')
 
             log( 'tests passed')
 
         finally:
-            if 1:
-                remove( build_c)
-                remove( build_h)
-                remove( build_exe)
-                remove( build_walkfile)
-                remove( a)
-                remove( b)
-                remove( c)
+            remove( build_c)
+            remove( build_h)
+            remove( build_exe)
+            remove( build_walkfile)
+            remove( rename_w)
+            remove( rename_a)
+            remove( rename_b)
+            remove( rename_c)
     
+    
+def _do_tests( use_hashs, methods):
+    '''
+    Runs tests for all combinations in <use_hashs> and <methods>.
+    '''
+    if not isinstance( use_hashs, (tuple, list)):
+        use_hashs = use_hashs,
+    if not isinstance( methods, (tuple, list)):
+        methods = methods,
+    for method in methods:
+        for use_hash in use_hashs:
+            _do_test( use_hash, method)
     
 
-class Args:
+def get_args( argv):
     '''
-    Iterates over argv items. Does getopt-style splitting of args starting with
-    single '-' character.
+    Generator that iterates over argv items. Does getopt-style splitting of
+    args starting with single '-' character.
     '''
-    def __init__( self, argv):
-        self.argv = argv
-        self.pos = 0
-        self.pos_sub = None
-    def next( self):
-        while 1:
-            if self.pos >= len(self.argv):
-                self.pos += 1
-                raise StopIteration()
-            arg = self.argv[self.pos]
-            if (not self.pos_sub
-                    and arg.startswith('-')
-                    and not arg.startswith('--')
-                    ):
-                # Start splitting current arg.
-                self.pos_sub = 1
-            if self.pos_sub and self.pos_sub >= len(arg):
-                # End of '-' sub-arg.
-                self.pos += 1
-                self.pos_sub = None
-                continue
-            if self.pos_sub:
-                # Return '-' sub-arg.
-                ret = arg[self.pos_sub]
-                self.pos_sub += 1
-                return f'-{ret}'
-            # Return normal arg.
-            self.pos += 1
-            return arg
+    for arg in argv:
+        if arg.startswith('-') and not arg.startswith('--'):
+            for arg2 in arg[1:]:
+                yield '-' + arg2
+        else:
+            yield arg
 
 
 def main():
@@ -2347,70 +2370,83 @@ def main():
     force = None
     verbose = None
     method = None
-    global _mtime_cache
-    args = Args( sys.argv[1:])
+    use_hash = True
     
+    args = get_args( sys.argv[1:])
+    arg = None
     while 1:
         try:
-            arg = args.next()
+            arg = next( args)
         except StopIteration:
             break
         
         if not arg.startswith( '-'):
-            break
+            walk_path = arg
+            command = ''
+            for arg in args:
+                command += f' {arg}'
+            e = system( command, walk_path, verbose, force, method=method)
+            sys.exit(e)
             
-        if 0:
-            pass
-        elif arg == '--time-load-all':
-            root = args.next()
-            time_load_all( root, p=False)
-        elif arg == '--time-load-all-p':
-            root = args.next()
-            time_load_all( root, p=True)
-        elif arg == '--new':
-            path = args.next()
-            mtime_cache_mark_new( path)
+        if arg == '-h' or arg == '--help':
+            sys.stdout.write( __doc__)
+        
         elif arg == '-f':
-            force = int(args.next())
+            force = int( next( args))
+        
         elif arg == '-h' or arg == '--help':
             sys.stdout.write( __doc__)
+        
+        elif arg == '--hash':
+            use_hash = int( next( args))
+        
         elif arg == '-m':
-            method = args.next()
+            method = next( args)
+        
+        elif arg == '--new':
+            path = next( args)
+            mtime_cache_mark_new( path)
+        
         elif arg == '--test':
-            _do_tests()
-            if _osname == 'OpenBSD':
-                _do_tests( method='trace')
+            if _openbsd:
+                methods = ('preload', 'trace')
+            else:
+                methods = ('trace',)
+            use_hashs = True, False
+            _do_tests( use_hashs,  methods)
+        
         elif arg == '--test-abc':
-            a = args.next()
-            b = args.next()
-            c = args.next()
+            a = next( args)
+            b = next( args)
+            c = next( args)
             with open( a) as f:
                 pass
             with open( b, 'w') as f:
                 pass
             os.rename( b, c)
+        
         elif arg == '--test-profile':
-            walk_file = args.next()
+            walk_file = next( args)
             t0 = time.time()
             t1 = t0 + 2
             i = 0
             while 1:
                 i += 1
-                system_check( walk_file)
+                system_check( walk_file, command='', use_hash=use_hash)
                 t = time.time()
                 if t > t1:
                     t -= t0
                     break
                 mtime_cache_clear = dict()
-            print( 'sec/it=%s' % (t/i))
+            print( f'sec/it={t/i}')
+        
+        elif arg == '--time-load-all':
+            root = next( args)
+            time_load_all( root)
+        
         else:
-            raise Exception( 'Unrecognised arg: %r' % arg)
-            
-    if args.pos < len( args.argv):
-        walk_path = args.argv[ args.pos-1]
-        command = ' '.join( args.argv[ args.pos:])
-        e = system( command, walk_path, verbose, force, method=method)
-        sys.exit(e)
+            raise Exception( f'Unrecognised arg: {arg}')
+
 
 if __name__ == '__main__':
     main()
