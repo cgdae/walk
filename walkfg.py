@@ -3,16 +3,15 @@
 r'''Build script for Flightgear on Unix systems.
 
 Usage:
-    We expect to be in a directory looking like:
+    We expect to be in a directory containing the following git checkouts:
         flightgear/
         plib/
         simgear/
         fgdata/
         
-    Each of these will typically be a git checkout.
-    
-    In this directory, run this script (wherever it happens to be).    
-        .../walkfg.py
+    In this directory, run this script (wherever it happens to be) with the
+    '-b' flag so it builds Flightgear.
+        .../walkfg.py -b
     
     All generated files will be in a new directory:    
         build-walk/
@@ -28,71 +27,63 @@ Usage:
         build-walk/fgfs.exe-run.sh
         build-walk/fgfs.exe-run-gdb.sh
         
-    So for example Flightgear can be run with:
+    So Flightgear can be run with:
         build-walk/fgfs.exe-run.sh --aircraft=... --airport=... ...
 
-
 Args:
-    Arguments are processed in the order they occur on the command line, so
-    typically -b or --build should be last.
-
     -b
     --build
-        Build fgfs.
-    
+        Do a build.    
     --clang 0 | 1
-        If 1, we force use of clang instead of system compiler.
-        
-        Default is 0.
-    
+        If 1, we force use of clang instead of system compiler. Default is 0.
     --debug 0 | 1
-        If 1 (default), we compile and link with -g to include debug symbols.
-    
+        If 1 (default), we compile and link with -g to include debug symbols.    
+    --optimise-prefix 0|1 <prefix>
+        Force optimise/no-optimise build for paths starting with <prefix>.
+    --doctest
+        Run doctest on this module.    
     --flags-all 0 | 1
         If 1, we use same compiler flags for all files (except for
         file-specific -W warning flags). So for example everything gets
         compiled with the same include path and defines.
         
-        Default is 0.
-    
+        Default is 0 - files get compiled with flags specific to their
+        location; this avoids unnecessary recompilation if flags for specific
+        files or locations are changed.
     --force 0 | 1 | default
-        If 0, we never run commands; depending on --verbose, we may output
+        If '0', we never run commands; depending on -v and -w, we may output
         diagnostics about what we would have run.
 
-        If 1, we always run commands, regardless of whether output files are up
+        If '1', we always run commands, regardless of whether output files are up
         to date.
         
-        If default, commands are run only if necessary.
-    
+        If 'default', commands are run only if necessary. This is also the
+        default.    
     --fp 0 | 1
-        If 1 we compile with -fno-omit-frame-pointer. Default is 0.
-    
+        If 1 we force use of frame pointer with
+        -fno-omit-frame-pointer. Default is 0.
     --gperf 0 | 1
-        If 1, build with support for google perf.
-    
+        If 1, build with support for google perf.    
     -h
     --help
-        Show help.
-    
+        Show help.    
     -j N
-        Set concurrency level.
-    
+        Set concurrency level - the maximum number of concurrent
+        compiles. Default is derived from Python's multiprocessing.cpu_count().    
     -l <maxload>
-        Only schedule new concurrent commands when load average is less than
-        <maxload>.
-    
+        Only schedule new concurrent commands when load average
+        is less than <maxload>. Default is derived from Python's
+        multiprocessing.cpu_count().    
     --link-only
-        Only do link.
-    
+        Only do link, do not compile.    
+    -n
+        Don't run commands. Equivalent to '--force 0'.    
     --new <path>
         Treat <path> as new.
-
     --old <path>
-        Treat <path> as old.
-    
+        Treat <path> as old.    
     --optimise 0 | 1
-        If 1 (the default), we build with compiler optimisations.
-    
+        If 1 (the default), we build with compiler optimisations.    
     --osg-dir <directory>
         Use local OSG install instead of system OSG.
         
@@ -107,8 +98,8 @@ Args:
                     && time make -j 3 \
                     && make install \
                     && cd ../../ \
-                    && ../todo/walkfg.py --osg openscenegraph/build/install -b \
                     ) 2>&1|tee out
+            .../walkfg.py --osg openscenegraph/build/install -b
     
             time (true \
                     && cd openscenegraph \
@@ -119,35 +110,34 @@ Args:
                     && VERBOSE=1 make -j 3 \
                     && VERBOSE=1 make install \
                     ) 2>&1|tee out
-                    ../todo/walkfg.py --osg openscenegraph/build-relwithdebinfo/install -b
+            .../walkfg.py --osg openscenegraph/build-relwithdebinfo/install -b    
     
-    -o fgfs | test-suite | props-test
-        Set what to build. Default is fgfs.
-    
+    -o fgfs | test-suite | props-test | yasim-test
+        Set what to build. Default is fgfs, the main Flightgear executable.    
     --osg 0|1
         Experimental: if 1, we also compile files in openscenegraph/ instead of
         using an existing build.
         
         As of 2021-11-06, this does not work because the build does not create
         the OSG plugin libraries.
-
     --out-dir <directory>
         Set the directory that will contain all generated files.
         
-        Default is build-walk.
-    
+        Default is build-walk.    
     --props-locking 0 | 1
-        If 0, build with SG_PROPS_UNTHREADSAFE pre-defined.
-    
+        If 0, build with SG_PROPS_UNTHREADSAFE pre-defined.    
+    -q
+        Reduce diagnostics (use -v to increase).    
     --show
-        Show settings.
-    
+        Show settings.    
     -t
-        Show detailed timing information at end.
-    
+        Show detailed timing information at end.    
     -v
-    --verbose [+-fFdDrRcCe]
-        Set verbose flags:
+        Increase diagnostics (use -v to decrease).    
+    --v-src <path>
+        Show compile command when compiling <path>.    
+    -w [+-fFdDrRcCe]
+        Set Walk verbose flags:
             
             f   Show if we are forcing running of a command.
             F   Show if we are forcing non-running of a command.
@@ -170,7 +160,6 @@ Args:
         
         If arg starts with +/-, we add/remove the specified flags to/from the
         existing settings.
-
 
 Requirements:
 
@@ -220,12 +209,11 @@ Requirements:
                     openal \
                     openscenegraph \
                     qtdeclarative \
-
 '''
 
 '''
 License:
-    Copyright 2020 Julian Smith.
+    Copyright 2020-2022 Julian Smith.
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -241,7 +229,11 @@ License:
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 '''
 
+import doctest
 import glob
+import inspect
+import io
+import multiprocessing
 import os
 import re
 import resource
@@ -249,38 +241,167 @@ import subprocess
 import sys
 import textwrap
 import time
+import traceback
+import types
 
 import walk
+
+def time_duration( seconds, verbose=0, decimals=0, align=False):
+    '''
+    Returns string representation of an interval.
+
+    seconds:
+        Duration in seconds
+    verbose:
+        If 0, return things like: 4d3h2m23.4s
+        If 1, return things like: 4d 3h 2m 23.4s
+        If 2, return things like: 4 days 1 hour 2 mins 23.4 secs
+    decimals:
+        Number of fractional decimal digits for seconds.
+    align:
+        If true, we pad items with leading spaces (verbose==2) or zeros
+        (verbose=0 or verbose=1) to make returned text have fixed alignment. If
+        2, we also pad positive durations with a space so that positive and
+        negative durations align.
+    
+    >>> m=60
+    >>> h=m*60
+    >>> d=24*h
+    >>> time_duration( 0)
+    '0s'
+    >>> time_duration( 0, verbose=1)
+    '0s'
+    >>> time_duration( 0, verbose=2)
+    '0 sec'
+    >>> time_duration( 3)
+    '3s'
+    >>> time_duration( 2*m + 3)
+    '2m3s'
+    >>> time_duration( h*3 + m*2 + 3, align=True)
+    ' 3h02m03s'
+    >>> time_duration( d*3 + h*12 + m*15 + 3)
+    '3d12h15m3s'
+    >>> time_duration( h*3 + 3)
+    '3h3s'
+    >>> time_duration( h*3 + m*20 + 3)
+    '3h20m3s'
+    >>> time_duration( h*3 + 3, align=True)
+    ' 3h00m03s'
+    >>> time_duration( h*3 + 3, align=True, verbose=1)
+    ' 3h  0m  3s'
+    >>> time_duration( h*3, align=True, verbose=1)
+    ' 3h  0m  0s'
+    >>> time_duration( d*3 + h*12 + m*15 + 33)
+    '3d12h15m33s'
+    >>> time_duration( m*50 + 3.34567, decimals=1, align=True)
+    '50m03.3s'
+    >>> time_duration( d*3 + h*12 + m*5 + 3.34567, decimals=1, align=True)
+    ' 3d12h05m03.3s'
+    >>> time_duration( d*3 + h*12 + m*5 + 33, verbose=2)
+    '3 days 12 hours 5 mins 33 secs'
+    >>> time_duration( d*3 + h*12 + m*1 + 33.123456, verbose=2, decimals=3)
+    '3 days 12 hours 1 min 33.123 secs'
+    >>> time_duration( d*3 + h*12 + m*1 + 33.123456, verbose=2, decimals=3, align=True)
+    ' 3 days 12 hours  1 min  33.123 secs'
+    '''
+    assert verbose in ( 0, 1, 2)
+    x = abs(seconds)
+    ret = ''
+    for i, (div, name) in enumerate([
+            ( 60, 'sec'),
+            ( 60, 'min'),
+            ( 24, 'hour'),
+            ( None, 'day'),
+            ]):
+        force = ( x == 0 and i == 0)
+        if div:
+            value = x % div
+            x = int( x / div)
+        else:
+            value = x
+            x = 0
+        if verbose in ( 0, 1):
+            name = name[0]  # Just use first letter of <name>.
+        if value or (x and align) or force:
+            if verbose == 2:
+                name += 's' if value > 1 else ' ' if align else ''
+                name = ' ' + name
+            if verbose in (1, 2) and i:
+                name += ' '
+            value = str(value) if i else f'{value:.{decimals}f}'
+            if x and align:
+                # There are more items to add, so pad current item with leading
+                # zeros/spaces to give fixed alignment.
+                length = value.find( '.')
+                if length == -1:
+                    length = len( value)
+                assert length <= 2
+                n = 2 - length
+                c = '0' if verbose == 0 else ' '
+                value = c * n + value
+            ret = f'{value}{name}{ret}'
+        i += 1
+    
+    if seconds < 0:
+        ret = '-' + ret
+    elif align == 2:
+        ret = ' ' + ret
+    
+    return ret
+
+
+class LogPrefix:
+    '''
+    Creates dynamic prefix text showing elapsed time and progress as a
+    percentage.
+    
+    Code should update self.progress between 0 and 1 to indicate progress.
+    '''
+    def __init__( self):
+        self.t0 = time.time()
+        self.progress = 0
+    def __call__( self):
+        dt = time.time() - self.t0
+        elapsed = time_duration( dt, verbose=0, decimals=1, align=True)
+        progress = self.progress() if callable( self.progress) else self.progress
+        percent = f'{100*progress:3.0f}'
+        #return f'{elapsed:>8s} {percent}% progress={self.progress}: '
+        return f'{elapsed:>8s} {percent}%: '
+
+_log_prefix = LogPrefix()
+
+# Tell walk.log() to use _log_prefix as prefix for each line.
+walk.log_prefix_set( _log_prefix)
 
 
 g_build_debug = 1
 g_build_optimise = 1
 g_clang = False
-g_concurrency = 3
+g_concurrency = None
+g_verbose = 0
 g_flags_all = False
 g_force = None
 g_keep_going = False
 g_link_only = False
-g_max_load_average = 6
+g_max_load_average = None
 g_osg = False   # If true, we build osg ourselves; does not yet work.
 g_osg_dir = None
 g_outdir = 'build-walk'
 g_gperf = 0
-g_timings = False
-g_verbose = 'der'
-g_test_suite = False
+g_show_timings = False
+g_walk_verbose = 'der'
 g_verbose_srcs = []
 g_props_locking = True
 g_frame_pointer = False
 g_ffmpeg = True
+g_optimise_prefixes = []
 
 g_os = os.uname()[0]
 g_openbsd = (g_os == 'OpenBSD')
 g_linux = (g_os == 'Linux')
 
-if g_openbsd:
-    g_clang = True
-
+def system_out( text):
+    walk.log( f'> {text}')
 
 def system( command, walk_path, description=None, verbose=None):
     '''
@@ -289,7 +410,7 @@ def system( command, walk_path, description=None, verbose=None):
     value.
     '''
     if verbose is None:
-        verbose = g_verbose
+        verbose = g_walk_verbose
     e = walk.system(
             command,
             walk_path,
@@ -297,17 +418,25 @@ def system( command, walk_path, description=None, verbose=None):
             force=g_force,
             description=description,
             #out_prefix='    ',
+            out=system_out,
             )
     if e:
-        raise Exception( 'command failed: %s' % command)
+        raise Exception( f'command failed: {command}')
 
-def system_concurrent( walk_concurrent, command, walk_path, description=None, verbose=None, command_compare=None):
+def system_concurrent(
+        walk_concurrent,
+        command,
+        walk_path,
+        description=None,
+        verbose=None,
+        command_compare=None,
+        ):
     '''
     Wrapper for walk_concurrent.system() which sets default verbose and force
     flags.
     '''
     if verbose is None:
-        verbose = g_verbose
+        verbose = g_walk_verbose
     doit, reason, e = walk_concurrent.system_r(
             command,
             walk_path,
@@ -316,17 +445,16 @@ def system_concurrent( walk_concurrent, command, walk_path, description=None, ve
             description=description,
             command_compare=command_compare,
             #out_prefix='    ',
+            out=system_out,
             )
     return doit or g_force, reason, e
 
 def file_write( text, path, verbose=None):
     '''
-    Wrapper for walk.file_write() which sets default verbose flag, and
-    raises an exception if the command fails instead of returning an error
-    value.
+    Wrapper for walk.file_write() which uses g_walk_verbose and g_force.
     '''
     if verbose == None:
-        verbose = g_verbose
+        verbose = g_walk_verbose
     walk.file_write( text, path, verbose, g_force)
 
 
@@ -356,7 +484,7 @@ def git_id( directory):
     '''
     Returns git sha.
     '''
-    id = subprocess.check_output( 'cd %s && PAGER= git show --pretty=oneline' % directory, shell=True)
+    id = subprocess.check_output( f'cd {directory} && PAGER= git show --pretty=oneline', shell=True)
     id = id.decode( 'latin-1')
     id = id.split( '\n', 1)[0]
     id = id.split( ' ', 1)[0]
@@ -366,12 +494,19 @@ def git_id( directory):
 def get_files( target):
     '''
     Returns (all, cpp) where <all> is list of files known to git and <cpp> is
-    subset of these files that are not headers and are used to build fgfs (e.g.
-    excluding test files and header files).
+    subset of these files that are not headers and are used to build <target>.
     
     We find all files known to git, then prune out various files which we don't
     want to include in the build.
+    
+    target:
+        One of:
+            fgfs
+            props-test
+            test-suite
+            yasim-test
     '''
+    
     exclude_patterns = [
             'flightgear/3rdparty/cjson/test.c',
             'flightgear/3rdparty/flite_hts_engine/bin/flite_hts_engine.c',
@@ -415,10 +550,13 @@ def get_files( target):
             'flightgear/src/FDM/LaRCsim/ls_trim.c',
             'flightgear/src/FDM/LaRCsim/mymain.c',
             'flightgear/src/FDM/YASim/proptest.cpp',
-            'flightgear/src/FDM/YASim/yasim-test.cpp',
+            #'flightgear/src/FDM/YASim/yasim-test.cpp',
             'flightgear/src/GUI/FGWindowsMenuBar.cxx',
             'flightgear/src/GUI/WindowsFileDialog.cxx',
             'flightgear/src/GUI/WindowsMouseCursor.cxx',
+            'flightgear/src/Viewer/VRManager.cxx',
+            
+            'flightgear/3rdparty/osgXR/*',
             'flightgear/src/Viewer/VRManager.cxx',
             
             # 2020-6-10: needs qt5-qtbase-private-devel, which isn't
@@ -472,6 +610,7 @@ def get_files( target):
             'simgear/simgear/canvas/events/event_test.cpp',
             'simgear/simgear/canvas/events/input_event_demo.cxx',
             'simgear/simgear/canvas/layout/canvas_layout_test.cxx',
+            'simgear/simgear/canvas/ShaderVG/*',
             'simgear/simgear/debug/logtest.cxx',
             'simgear/simgear/embedded_resources/embedded_resources_test.cxx',
             'simgear/simgear/emesary/test_emesary.cxx',
@@ -628,15 +767,52 @@ def get_files( target):
                 'flightgear/3rdparty/joystick/jsNone.cxx',
                 ]
     
-    if target == 'fgfs':
+    if target == 'yasim-test':
+        exclude_patterns += [
+                #'simgear/*',
+                'flightgear/src/AIModel/*',
+                'flightgear/src/ATC/*',
+                'flightgear/src/Add-ons/*',
+                'flightgear/src/Aircraft/*',
+                'flightgear/src/Airports/*',
+                'flightgear/src/Autopilot/*',
+                'flightgear/src/Canvas/*',
+                'flightgear/src/Cockpit/*',
+                'flightgear/src/Environment/*',
+                'flightgear/src/FDM/AIWake/*',
+                'flightgear/src/FDM/ExternalNet/*',
+                'flightgear/src/FDM/ExternalPipe/*',
+                'flightgear/src/FDM/JSBSim/*',
+                'flightgear/src/FDM/LaRCsim/*',
+                'flightgear/src/FDM/Navaids/*',
+                'flightgear/src/FDM/SP/*',
+                'flightgear/src/FDM/UIUCModel/*',
+                'flightgear/src/FDM/fdm_shell.cxx',
+                'flightgear/src/GUI/*',
+                'flightgear/src/Main/*',
+                'flightgear/src/Main/bootstrap.cxx',
+                'flightgear/src/Main/fg_props.cxx',
+                'flightgear/src/Model/*',
+                'flightgear/src/Time/*',
+                'flightgear/src/FDM/UFO.cxx',
+                'plib/*',
+                ]
+    else:
+        exclude_patterns += [
+                'flightgear/src/FDM/YASim/yasim-test.cpp'
+                ]
+    
+    if target in ( 'fgfs', 'yasim-test'):
         exclude_patterns += [
                 'flightgear/test_suite/*',
                 'flightgear/3rdparty/cppunit/*',
                 'simgear/simgear/props/props_test.cxx',
                 ]
-    elif target == 'test-suite':
+    
+    if target == 'test-suite':
         exclude_patterns += [
                 'flightgear/src/Main/bootstrap.cxx',
+                'flightgear/src/Scripting/NasalUnitTesting.cxx',
                 'flightgear/test_suite/system_tests/Instrumentation/testgps.cxx',
                 'flightgear/test_suite/system_tests/Navaids/testnavs.cxx',
                 'flightgear/test_suite/attic/*',
@@ -644,16 +820,16 @@ def get_files( target):
                 'flightgear/3rdparty/cppunit/src/cppunit/Win32DynamicLibraryManager.cpp',
                 'simgear/simgear/props/props_test.cxx',
                 ]
-    elif target == 'props-test':
+    
+    if target == 'props-test':
         exclude_patterns += [
                 'flightgear/*',
                 'plib/*',
                 ]
-    else:
-        assert 0, f'target={target}'
     
-    # It's important to sort exclude_patterns because we rely on ordering to
-    # short-cut the searches we do below.
+    
+    # We sort <exclude_patterns> so that we can short-cut the searches we do
+    # below.
     #
     exclude_patterns.sort()
 
@@ -677,31 +853,85 @@ def get_files( target):
         if suffix not in ('.c', '.cpp', '.cxx'):
             continue
         include = True
-        for i, ep in enumerate(exclude_patterns, exclude_patterns_pos):
-            if ep.endswith( '*'):
-                if path.startswith( ep[:-1]):
+        for i, exclude_pattern in enumerate(exclude_patterns, exclude_patterns_pos):
+            if exclude_pattern.endswith( '*'):
+                if path.startswith( exclude_pattern[:-1]):
                     include = False
                     break
             else:
-                c = cmp( ep, path)
-                if c < 0:
-                    exclude_patterns_pos = i + 1
+                c = cmp( exclude_pattern, path)
+                if c > 0:
+                    # <exclude_pattern> does not match <path>, and later
+                    # exclude patterns will also not match <path>.
+                    break
+                
+                # If we get here, <exclude_pattern> will not match later paths.
+                exclude_patterns_pos = i + 1
+                
+                # <exclude_pattern> matches <path>, so exclude <path>.
                 if c == 0:
                     include = False
-                    exclude_patterns_pos = i + 1
-                    break
-                if c > 0:
                     break
         if include:
             ret.append( path)
+    
+    if target == 'yasim-test':
+        ret2 = [
+                'flightgear/src/FDM/YASim/Airplane.cpp',
+                'flightgear/src/FDM/YASim/YASimAtmosphere.cpp',
+                'flightgear/src/FDM/YASim/ControlMap.cpp',
+                'flightgear/src/FDM/YASim/ElectricEngine.cpp',
+                'flightgear/src/FDM/YASim/FGFDM.cpp',
+                'flightgear/src/FDM/YASim/Gear.cpp',
+                'flightgear/src/FDM/YASim/Glue.cpp',
+                'flightgear/src/FDM/YASim/Ground.cpp',
+                'flightgear/src/FDM/YASim/Hitch.cpp',
+                'flightgear/src/FDM/YASim/Hook.cpp',
+                'flightgear/src/FDM/YASim/Integrator.cpp',
+                'flightgear/src/FDM/YASim/Jet.cpp',
+                'flightgear/src/FDM/YASim/Launchbar.cpp',
+                'flightgear/src/FDM/YASim/Model.cpp',
+                'flightgear/src/FDM/YASim/PistonEngine.cpp',
+                'flightgear/src/FDM/YASim/PropEngine.cpp',
+                'flightgear/src/FDM/YASim/Propeller.cpp',
+                'flightgear/src/FDM/YASim/RigidBody.cpp',
+                'flightgear/src/FDM/YASim/Rotor.cpp',
+                'flightgear/src/FDM/YASim/Rotorpart.cpp',
+                'flightgear/src/FDM/YASim/SimpleJet.cpp',
+                'flightgear/src/FDM/YASim/Surface.cpp',
+                'flightgear/src/FDM/YASim/TurbineEngine.cpp',
+                'flightgear/src/FDM/YASim/Turbulence.cpp',
+                'flightgear/src/FDM/YASim/Wing.cpp',
+                'flightgear/src/FDM/YASim/Version.cpp',
+                'flightgear/src/FDM/YASim/yasim-common.cpp',
+                'flightgear/src/FDM/YASim/yasim-test.cpp',
+                ]
+        for i in ret:
+            if i.startswith( 'simgear/'):
+                ret2.append( i)
+        ret = ret2
     
     return all_files, ret
 
 
 _cc_command_compare_regex = None
+
 def cc_command_compare( a, b):
     '''
     Compares cc comamnds, ignoring differences in warning flags.
+    
+    >>> cc_command_compare( 'cc -o foo bar.c -Wno-xyz -Werror', 'cc -o foo bar.c -Wno-xyz -Werror')
+    False
+    >>> cc_command_compare( 'cc -o foo bar.c -Wno-xyz -Werror', 'cc -o foo bar.c -Werror')
+    False
+    >>> cc_command_compare( 'cc -o foo bar.c -Wno-xyz -Werror', 'cc -o foo bar.c -Wno-q -Werror')
+    False
+    >>> cc_command_compare( 'cc -o foo bar.c -Wno-xyz -Werror', 'cc -o foo bar.c -O2 -Werror')
+    1
+    >>> cc_command_compare( 'cc -o foo bar.c -fmax-errors=10', 'cc -o foo bar.c -fmax-errors=11')
+    False
+    >>> cc_command_compare( 'cc -o foo bar.c -fmax-errors=10 l', 'cc -o foo bar.c l')
+    False
     '''
     global _cc_command_compare_regex
     if _cc_command_compare_regex is None:
@@ -714,19 +944,10 @@ def cc_command_compare( a, b):
     ret0 = a != b
     if not ret and ret0:
         pass
-        #print( 'ignoring command diff:\n    %s\n    %s' % (a, b))
+        #print( f'ignoring command diff:\n    {a}\n    {b}')
     if ret and not ret0:
         assert 0
     return ret
-
-if 1:
-    assert cc_command_compare( 'cc -o foo bar.c -Wno-xyz -Werror', 'cc -o foo bar.c -Wno-xyz -Werror') == 0
-    assert cc_command_compare( 'cc -o foo bar.c -Wno-xyz -Werror', 'cc -o foo bar.c -Werror') == 0
-    assert cc_command_compare( 'cc -o foo bar.c -Wno-xyz -Werror', 'cc -o foo bar.c -Wno-q -Werror') == 0
-    assert cc_command_compare( 'cc -o foo bar.c -Wno-xyz -Werror', 'cc -o foo bar.c -O2 -Werror') != 0
-    assert cc_command_compare( 'cc -o foo bar.c -fmax-errors=10', 'cc -o foo bar.c -fmax-errors=11') == 0
-    assert cc_command_compare( 'cc -o foo bar.c -fmax-errors=10 l', 'cc -o foo bar.c l') == 0
-
 
 
 class CompileFlags:
@@ -737,6 +958,10 @@ class CompileFlags:
         self.items = []
     
     def add( self, path_prefixes, flags):
+        '''
+        Add <flags> when compiling source files which start with any item in
+        <path_prefixes>.
+        '''
         assert flags == '' or flags.startswith( ' ')
         flags = flags.replace( ' -D ', ' -D')
         flags = flags.replace( ' -I ', ' -I')
@@ -746,14 +971,14 @@ class CompileFlags:
     
     def get_flags( self, path):
         '''
-        Returns compile flags for compiling <path>.
+        Returns compile flags to use when compiling <path>.
         '''
         ret = ''
         for path_prefixes, flags in self.items:
             for path_prefix in path_prefixes:
-                #walk.log( 'looking at path_prefix: %s' % path_prefix)
+                #walk.log( f'looking at path_prefix: {path_prefix}')
                 if path.startswith( path_prefix):
-                    #walk.log( 'adding flags: %s' % flags)
+                    #walk.log( f'adding flags: {flags}')
                     ret += flags
                     break
         return ret
@@ -761,7 +986,8 @@ class CompileFlags:
     def get_flags_all( self, path):
         '''
         Returns compile flags for compiling <path>, using a union of all flags
-        except for warning flags which are calculated specificall for <path>.
+        (except for warning flags which are still calculated specifically for
+        <path>).
         '''
         ret_flags = set()
         ret = ''
@@ -780,13 +1006,14 @@ class CompileFlags:
                 if is_warning:
                     if match:
                         ret_flags.add( flag)
-                        ret_warnings += ' %s' % flag
+                        ret_warnings += f' {flag}'
                 else:
+                    # Change '-DFOO' to '-D FOO' etc. Not sure why we do this.
                     ret_flags.add( flag)
                     for prefix in 'DI':
                         if flag.startswith( '-'+prefix):
-                            flag = '-%s %s' % (prefix, flag[2:])
-                    ret += ' %s' % flag
+                            flag = f'-{prefix} {flag[2:]}'
+                    ret += f' {flag}'
                     
         return ret + ret_warnings
 
@@ -858,7 +1085,7 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
             ' -Wno-implicit-fallthrough'
             )
     
-    if g_clang:
+    if g_clang or g_openbsd:
         cf.add( (
                 'flightgear/',
                 'simgear/',
@@ -886,6 +1113,7 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
             'flightgear/src/GUI',
             'flightgear/src/Navaids/FlightPlan.cxx',
             'simgear/simgear/canvas/elements/CanvasImage.cxx',
+            'simgear/simgear/canvas/layout/',
             'simgear/simgear/nasal/codegen.c',
             'simgear/simgear/nasal/iolib.c',
             'simgear/simgear/nasal/parse.c',
@@ -973,24 +1201,23 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
     # Include/define flags.
 
     cf.add( (
-            'flightgear/',
-            '%s/flightgear/' % g_outdir,
-            'simgear/',
-            '%s/simgear/' % g_outdir,
-            '%s/walk-generated/flightgear/' % g_outdir,
+             'flightgear/',
+            f'{g_outdir}/flightgear/',
+             'simgear/',
+            f'{g_outdir}/simgear/',
+            f'{g_outdir}/walk-generated/flightgear/',
             ),
             cpp_feature_defines
             )
 
     cf.add( (
-            'flightgear/',
-            '%s/flightgear/' % g_outdir,
+             'flightgear/',
+            f'{g_outdir}/flightgear/',
             ),
-            ' -I simgear'
-            ' -I flightgear/src'
-            ' -I %s/walk-generated'
-            ' -D ENABLE_AUDIO_SUPPORT'
-            % g_outdir
+             ' -I simgear'
+             ' -I flightgear/src'
+            f' -I {g_outdir}/walk-generated'
+             ' -D ENABLE_AUDIO_SUPPORT'
             )
 
     cf.add( (
@@ -1063,13 +1290,12 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
             )
 
     cf.add( (
-            'flightgear/src/GUI/',
-            '%s/flightgear/src/GUI/' % g_outdir,
+            f'flightgear/src/GUI/',
+            f'{g_outdir}/flightgear/src/GUI/',
             ),
-            ' -I %s/walk-generated/Include'
-            ' -I flightgear/3rdparty/fonts'
-            ' -I %s/flightgear/src/GUI'
-            % (g_outdir, g_outdir)
+            f' -I {g_outdir}/walk-generated/Include'
+            f' -I flightgear/3rdparty/fonts'
+            f' -I {g_outdir}/flightgear/src/GUI'
             )
 
     cf.add( 'flightgear/src/Input/',
@@ -1078,7 +1304,7 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
             )
 
     cf.add( 'flightgear/3rdparty/fonts/',
-            ' -I %s/walk-generated/plib-include' % g_outdir
+            f' -I {g_outdir}/walk-generated/plib-include'
             )
 
     cf.add( 'flightgear/3rdparty/hidapi/',
@@ -1114,6 +1340,10 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
             ' -I flightgear'
             f' -I {g_outdir}/walk-generated/Include'
             )
+    
+    cf.add( 'flightgear/src/Scripting/ClipboardX11.cxx',
+            ' -D FLIGHTGEAR_WALK'
+            )
 
     cf.add( 'flightgear/src/Sound',
             ' -I flightgear/3rdparty/flite_hts_engine/include'
@@ -1124,13 +1354,16 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
             ' -I flightgear/3rdparty/fonts'
             )
 
+    cf.add( 'simgear/simgear/canvas/ShaderVG',
+            ' -I simgear/simgear/canvas/ShaderVG/include'
+            )
+    
     cf.add( 'simgear/simgear/',
             ' -I simgear'
             ' -I simgear/simgear/canvas/ShivaVG/include'
             ' -I simgear/3rdparty/udns'
-            ' -I %s/walk-generated'
-            ' -I %s/walk-generated/simgear'
-            % (g_outdir, g_outdir)
+            f' -I {g_outdir}/walk-generated'
+            f' -I {g_outdir}/walk-generated/simgear'
             )
 
     cf.add( (
@@ -1194,7 +1427,7 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
             ' -I plib/src/ssg'
             )
 
-    cf.add('%s/walk-generated/EmbeddedResources' % g_outdir,
+    cf.add( f'{g_outdir}/walk-generated/EmbeddedResources',
             ' -I simgear'
             )
 
@@ -1212,7 +1445,7 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
             )
 
 
-    cf.add( 'simgear/simgear/canvas/ShivaVG',
+    cf.add( 'simgear/simgear/canvas/',
             ' -D HAVE_INTTYPES_H'
             )
 
@@ -1224,8 +1457,8 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
             'flightgear/src/Model/',
             'flightgear/src/Viewer/',
             ),
-            ' -I %s/walk-generated/plib-include' % g_outdir
-            + ' -I %s/walk-generated/plib-include/plib' % g_outdir
+            f' -I {g_outdir}/walk-generated/plib-include'
+            + f' -I {g_outdir}/walk-generated/plib-include/plib'
             )
     
     # Cmake build puts FG_HAVE_GPERFTOOLS in config.h, but this requires
@@ -1244,6 +1477,14 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
             ' -I flightgear/3rdparty/cppunit/include'
             ' -I flightgear'
             )
+    cf.add( (
+            'flightgear/3rdparty/cppunit/',
+            'flightgear/test_suite/',
+            ),
+            # Show complete pathname in cppunit assert failures.
+            ' -D CPPUNIT_COMPILER_LOCATION_FORMAT=\'"%p:%l: "\''
+            )
+    
     cf.add( (
             'flightgear/test_suite/system_tests/FDM',
             'flightgear/test_suite/simgear_tests/math',
@@ -1284,32 +1525,51 @@ class Timing:
 
 class Timings:
     '''
-    Maintains a tree of Timing items.
-    Example usage:
-        timings = Timings()
-        timings.begin('all')
-        timings.begin('init')
-        timings.begin('phase 1')
-        timings.end('init') # will also end 'phase 1'.
-        timings.begin('phase 2')
-        timings.end()   # will end everything.
-        print(timings)
-    This will create timing tree like:
-        all
-            init
-                phase 1
-            phase 2
+    Allows gathering of hierachical timing information. Can also generate useful
+    diagnostics.
+    
+    Caller can generate a tree of Timing items via our begin() and end() methods.
+    
+    >>> ts = Timings()
+    >>> ts.begin('a')
+    >>> time.sleep(0.1)
+    >>> ts.begin('b')
+    >>> time.sleep(0.2)
+    >>> ts.begin('c')
+    >>> time.sleep(0.3)
+    >>> ts.end('b') # will also end 'c'.
+    >>> ts.begin('d')
+    >>> ts.begin('e')
+    >>> time.sleep(0.1)
+    >>> ts.end()    # will end everything.
+    >>> print(ts)
+    Timings (in seconds):
+        0.7 a
+            0.5 b
+                0.3 c
+            0.1 d
+                0.1 e
+    <BLANKLINE>
     '''
     def __init__( self):
         self.current = None # Points to most recent in-progress item.
         self.first = None   # Points to top item.
         self.name_max_len = 0
     
-    def begin( self, name):
+    def begin( self, name, text=None, level=0):
         '''
         Starts a new timing item as child of most recent in-progress timing
         item.
+        
+        name:
+            Used in final statistics.
+        text:
+            If not None, this is output here with walk.log().
+        level:
+            Verbosity. Added to g_verbose.
         '''
+        if g_verbose + level >= 1 and text is not None:
+            walk.log( f'{text}')
         self.name_max_len = max( self.name_max_len, len(name))
         new_timing = Timing( name)
         
@@ -1344,8 +1604,15 @@ class Timings:
             self.current = self.current.parent
             if name2 == name:
                 break
+        else:
+            if name is not None:
+                walk.log( f'*** Warning: cannot end timing item called {name} because not found.')
+        #walk.log( f'< {name}')
     
     def text( self, t, depth):
+        '''
+        Returns text showing hierachical timing information.
+        '''
         ret = ''
         ret += ' ' * 4 * depth + f' {t.get():6.1f} {t.name}\n'
         for child in t.children:
@@ -1357,37 +1624,45 @@ class Timings:
         ret += self.text( self.first, 0)
         return ret
 
-if 0:
-    ts = Timings()
-    ts.add('a')
-    time.sleep(0.1)
-    ts.add('b')
-    time.sleep(0.2)
-    ts.add('c')
-    time.sleep(0.3)
-    ts.end('b')
-    ts.add('d')
-    ts.add('e')
-    time.sleep(0.1)
-    ts.end()
-    print(ts)
-    sys.exit()
 
-
-def do_compile(target, walk_concurrent, gcc_base, gpp_base, cf, path):
+def do_compile(target, walk_concurrent, cc_base, cpp_base, cf, path, preprocess=False, force=None):
     '''
-    Compiles <path> if necessary. Returns name of .o file.
+    Schedules compile of <path> (if necessary). Returns name of .o file.
+    
+    target:
+        One of:
+            fgfs
+            test-suite
+            ...
+        walk_concurrent
+            A walk.Concurrent instance.
+        cc_base
+            Base cc compiler command.
+        cpp_base
+            Base c++ compiler command.
+        cf
+            A CompileFlags instance.
+        path
+            Source file to compile.
+        preprocess
+            If true, generate preprocessed output, don't compile.
     '''
+    assert isinstance( cf, CompileFlags)
+    
     if path.endswith( '.c'):
-        command = gcc_base
+        command = cc_base
     else:
-        command = gpp_base
+        command = cpp_base
 
-    command += ' -c'
+    if preprocess:
+        command += ' -E'
+    else:
+        command += ' -c'
 
-    path_o = '%s/%s' % (g_outdir, path)
+    path_o = f'{g_outdir}/{path}'
 
     if target == 'test-suite':
+        # Most .o files are identical to a fgfs build.
         if path in (
                 #'flightgear/src/Airports/airport.cxx',
                 'flightgear/src/Main/sentryIntegration.cxx',
@@ -1399,15 +1674,25 @@ def do_compile(target, walk_concurrent, gcc_base, gpp_base, cf, path):
     if g_clang:
         path_o += ',clang'
     if g_build_debug:
-        command += ' -g'
+        command += ' -g -gsplit-dwarf'
         path_o += ',debug'
     if g_frame_pointer:
         command += ' -fno-omit-frame-pointer'
         path_o += ',fp'
-    if g_build_optimise:
+    
+    optimise = g_build_optimise
+    for o, prefix in g_optimise_prefixes:
+        #walk.log( f'o={o!r} prefix={prefix!r}')
+        if path.startswith( prefix):
+            walk.log( f'Forcing optimise={o} for path={path}')
+            optimise = o
+    if optimise:
+        command += ' -O3 -msse2 -mfpmath=sse -ftree-vectorize -ftree-slp-vectorize'
+        path_o += ',opt'
+    if 0 and g_build_optimise:
         # Allow selected files to be compiled without optimisation to
         # help debugging.
-        if path in (
+        if path in [
                 #'flightgear/src/AIModel/AIMultiplayer.cxx',
                 #'flightgear/src/Aircraft/controls.cxx',
                 #'flightgear/src/Aircraft/replay.cxx',
@@ -1430,7 +1715,8 @@ def do_compile(target, walk_concurrent, gcc_base, gpp_base, cf, path):
                 #'simgear/simgear/scene/model/particles.cxx',
                 #'simgear/simgear/scene/viewer/CompositorPass.cxx',                
                 #'simgear/simgear/screen/video-encoder.cxx',
-                ):
+                #'flightgear/src/FDM/YASim/Gear.cpp',
+                ]:
             walk.log(f'*** not optimising {path}')
             command += ' -ggdb'
         else:
@@ -1451,14 +1737,17 @@ def do_compile(target, walk_concurrent, gcc_base, gpp_base, cf, path):
         path_o += ',sgunsafe'
         command = command + ' -D SG_PROPS_UNTHREADSAFE'
 
-    path_o += '.o'
+    if preprocess:
+        path_o += os.path.splitext( path)[1]
+    else:
+        path_o += '.o'
 
     if g_link_only:
         doit = False
         reason = None
         e = None
     else:
-        command += ' -o %s %s' % (path_o, path)
+        command += f' -o {path_o} {path}'
         if path in g_verbose_srcs:
             walk.log(f'command is: {command}')
 
@@ -1467,8 +1756,8 @@ def do_compile(target, walk_concurrent, gcc_base, gpp_base, cf, path):
         doit, reason, e = system_concurrent(
                 walk_concurrent,
                 command,
-                '%s.walk' % path_o,
-                description='Compiling to %s' % path_o,
+                f'{path_o}.walk',
+                description=f'Compiling to {path_o}',
                 command_compare=cc_command_compare,
                 )
     
@@ -1481,15 +1770,147 @@ def cc_version(cc):
     t = t.split('.')
     #walk.log(f'cc={cc!r} returning: {t}')
     return t
-    
 
-def build( target):
-    '''
-    Builds Flightgear using g_* settings.
-    '''
-    timings = Timings()
+
+def compilers_base():
+    # Set up compile/link commands.
+    #
+    cc_base = 'cc'
+    cpp_base = 'c++'
     
-    timings.begin( 'all')
+    if g_linux:
+        if cc_version(cpp_base)[0] == '10':
+            # g++-10 get internal errors for some files.
+            walk.log(f'Forcing gcc-9 and g++-9')
+            cpp_base = 'g++-9'
+            cc_base = 'gcc-9'
+    
+    if g_clang:
+        cc_base = 'clang'
+        cpp_base = 'clang++'
+    
+    if g_clang or g_openbsd:
+        cc_base += ' -Wno-unknown-warning-option'
+        cpp_base += ' -std=c++17 -Wno-unknown-warning-option'
+    else:
+        cpp_base += ' -std=gnu++17 -fmax-errors=10'
+    
+    cc_base += ' -pthread -W -Wall -fPIC -Wno-unused-parameter'
+    cpp_base += ' -pthread -W -Wall -fPIC -Wno-unused-parameter'
+    
+    #walk.log( f'returning cpp_base={cpp_base!r}')
+    return cc_base, cpp_base
+
+
+def get_cpp_feature_defines( timings, cpp_base):
+    '''
+    Returns string containing list of -D options, from running tests extracted
+    (crudely with regex) from .cmake file.
+    '''
+    cpp_feature_defines = ''
+    if g_openbsd:
+        path = 'simgear/CMakeModules/CheckCXXFeatures.cmake'
+        timings.begin( 'cpp-features', f'Running tests from {path}.')
+        with open( path) as f:
+            text = f.read()
+        for m in re.finditer('check_cxx_source_compiles[(]"([^"]*)" ([A-Z_]+)', text, re.M):
+            code = m.group(1)
+            define = m.group(2)
+            if g_verbose >= 3:
+                walk.log( f'Testing for {define}')
+            with open( f'{g_outdir}/test.cpp', 'w') as f:
+                f.write(code)
+            e = os.system( f'{cpp_base} -o /dev/null {g_outdir}/test.cpp 1>/dev/null 2>/dev/null')
+            if e == 0:
+                if g_verbose >= 2:
+                    walk.log( f'defining     {define}')
+                cpp_feature_defines += f' -D {define}'
+            else:
+                if g_verbose >= 2:
+                    walk.log( f'not defining {define}')
+                pass
+        timings.end( 'cpp-features')
+    return cpp_feature_defines
+
+
+def get_lib_flags():
+    '''
+    Returns (libs, libs_cflags, libs_linkflags):
+        libs
+            List of libraries we should link with.
+        libs_cflags
+            Compile flags from pkg-config for <libs>.
+        libs_linkflags
+            Link flags from pkg-config for <libs>.
+    '''
+    # Libraries for which we call pkg-config:
+    #
+    # On OpenBSD, qt requires -L/usr/local/lib but pkg-config Qt* doesn't
+    # provide it. However "pkg-config dbus-1" provides it.
+    #
+    libs = (
+            ' Qt5Core'
+            ' Qt5Gui'
+            ' Qt5Qml'
+            ' Qt5Quick'
+            ' Qt5Widgets'
+            ' dbus-1'
+            ' gl'
+            ' x11'
+            ' liblzma'
+            ' expat'
+            )
+    if not g_osg_dir:
+        libs += ' openscenegraph'
+    
+    if g_openbsd:
+        libs += (
+                ' glu'
+                ' libcurl'
+                ' libevent'
+                ' openal'
+                ' speex'
+                ' speexdsp'
+                )
+    
+    libs_cflags     = ' ' + subprocess.check_output( f'pkg-config --cflags {libs}', shell=1).decode( 'latin-1').strip()
+    libs_linkflags  = ' ' + subprocess.check_output( f'pkg-config --libs {libs}', shell=1).decode( 'latin-1').strip()
+    return libs, libs_cflags, libs_linkflags
+
+
+def preprocess( timings, target, path, walk_=None):
+    '''
+    Preprocess <path>, writing to <target>.c or <target.cpp.
+
+    Uses same code as for normal compilation, so should be representative.
+    '''
+    walk.log( f'preprocess target={target} path={path}')
+    cc_base, cpp_base = compilers_base()
+    libs, libs_cflags, libs_linkflags = get_lib_flags()
+    cpp_feature_defines = get_cpp_feature_defines( timings, cpp_base)
+    cf = make_compile_flags( libs_cflags, cpp_feature_defines)
+    
+    path_o, doit, reason, e = do_compile(
+            target,
+            walk_,
+            cc_base,
+            cpp_base,
+            cf,
+            path,
+            preprocess=True,
+            )
+
+def build( timings, target):
+    '''
+    Builds <target> using g_* settings.
+    
+    target:
+        One of:
+            fgfs
+            test-suite
+            props-test
+    '''
+    timings.begin( 'all', f'Building target={target}.', 2)
     
     timings.begin( 'pre')
     if g_openbsd:
@@ -1500,19 +1921,25 @@ def build( target):
         required = min(4*2**30, hard)
         if soft < required:
             if hard < required:
-                walk.log( f'Warning: RLIMIT_DATA hard={hard} is less than required={required}')
+                walk.log( f'Warning: RLIMIT_DATA hard={hard} is less than required={required}.')
             soft_new = min(hard, required)
             resource.setrlimit( resource.RLIMIT_DATA, (soft_new, hard))
-            walk.log( f'Have changed RLIMIT_DATA from {soft} to {soft_new}')
+            if g_verbose >= 2:
+                walk.log( f'Have changed RLIMIT_DATA from {soft} to {soft_new}.')
 
-    timings.begin( 'get_files')
+    timings.begin( 'get_files', 'Finding git source files.')
     all_files, src_fgfs = get_files( target)
     timings.end( 'get_files')
 
-    if target != 'props-test':
+    if target != 'props-test' and target != 'yasim-test':
+        
+        # Run various commands to patch source code or run moc etc. We use
+        # our system() which uses walk.system(), so after the first build we
+        # usually end up not running any external commands.
+        
         # Create patched version of plib/src/sl/slDSP.cxx.
-        timings.begin( 'plib-patch')
         path = 'plib/src/sl/slDSP.cxx'
+        timings.begin( 'plib-patch', f'Patching: {path}')
         path_patched = path + '-patched.cxx'
         with open(path) as f:
             text = f.read()
@@ -1527,7 +1954,7 @@ def build( target):
 
         # Generate .moc files. We look for files containing Q_OBJECT.
         #
-        timings.begin( 'moc')
+        timings.begin( 'moc', 'Generating Moc files.')
         moc = 'moc'
         if g_openbsd:
             moc = 'moc-qt5'
@@ -1538,31 +1965,35 @@ def build( target):
                     with open( i) as f:
                         text = f.read()
                     if 'Q_OBJECT' in text:
-                        cpp_file = '%s/%s.moc.cpp' % (g_outdir, i)
+                        cpp_file = f'{g_outdir}/{i}.moc.cpp'
                         system(
-                                '%s %s -o %s' % (moc, i, cpp_file),
-                                '%s.walk' % cpp_file,
-                                'Running moc on %s' % i,
+                                f'{moc} {i} -o {cpp_file}',
+                                f'{cpp_file}.walk',
+                                f'Running moc on {i}',
                                 )
                         src_fgfs.append( cpp_file)
                 elif ext in ('.cpp', '.cxx'):
-                    #walk.log( 'checking %s' % i)
+                    #walk.log( f'checking {i}')
                     with open( i) as f:
                         text = f.read()
                     if re.search( '\n#include ".*[.]moc"\n', text):
-                        #walk.log( 'running moc on: %s' % i)
-                        moc_file = '%s/%s.moc' % (g_outdir, i_base)
+                        #walk.log( f'running moc on: {i}')
+                        moc_file = f'{g_outdir}/{i_base}.moc'
                         system(
-                                '%s %s -o %s' % (moc, i, moc_file),
-                                '%s.walk' % moc_file,
-                                'Running moc on %s' % i,
+                                f'{moc} {i} -o {moc_file}',
+                                f'{moc_file}.walk',
+                                f'Running moc on {i}',
                                 )
         timings.end( 'moc')
 
+        # Create various header files. We use our file_write() which ensure
+        # that files are not written if they already contain the required
+        # content.
+        #
 
         # Create flightgear's config.h file.
         #
-        timings.begin( 'config')
+        timings.begin( 'config', 'Generating misc headers/source files.')
         fg_version = open('flightgear/flightgear-version').read().strip()
         fg_version_major, fg_version_minor, fg_version_tail = fg_version.split('.')
         root = os.path.abspath( '.')
@@ -1572,10 +2003,10 @@ def build( target):
                 #define FLIGHTGEAR_VERSION "{fg_version}"
                 #define FLIGHTGEAR_MAJOR_VERSION "{fg_version_major}"
                 #define FLIGHTGEAR_MINOR_VERSION "{fg_version_minor}"
-                #define VERSION    "%s"
-                #define PKGLIBDIR  "%s/fgdata"
-                #define FGSRCDIR   "%s/flightgear"
-                #define FGBUILDDIR "%s"
+                #define VERSION    "{fg_version}"
+                #define PKGLIBDIR  "{root}/fgdata"
+                #define FGSRCDIR   "{root}/flightgear"
+                #define FGBUILDDIR "{g_outdir}"
 
                 /* #undef FG_NDEBUG */
 
@@ -1644,14 +2075,9 @@ def build( target):
 
                 /* #undef HAVE_SENTRY */
                 #define SENTRY_API_KEY ""
-                ''' % (
-                        fg_version,
-                        root,
-                        root,
-                        g_outdir ,
-                        )
+                '''
                 ),
-                '%s/walk-generated/config.h' % g_outdir,
+                f'{g_outdir}/walk-generated/config.h',
                 )
 
 
@@ -1663,45 +2089,47 @@ def build( target):
                 #define HAVE_TIMEGM
                 #define HAVE_SYS_TIME_H
                 #define HAVE_UNISTD_H
-                #define HAVE_STD_INDEX_SEQUENCE
+                #define HAVE_STD_INDEX_SEQUENCE 1
                 ''')
                 ,
-                '%s/walk-generated/simgear/simgear_config.h' % g_outdir,
+                f'{g_outdir}/walk-generated/simgear/simgear_config.h',
                 )
 
         # Create various other headers.
         #
         file_write(
-                '#define FLIGHTGEAR_VERSION "%s"\n' % fg_version,
-                '%s/walk-generated/Include/version.h' % g_outdir,
+                f'#define FLIGHTGEAR_VERSION "{fg_version}"\n',
+                f'{g_outdir}/walk-generated/Include/version.h',
                 )
 
         git_id_text = git_id( 'flightgear').replace('"', '\\"')
         revision = ''
         revision += '#define JENKINS_BUILD_NUMBER 0\n'
         revision += '#define JENKINS_BUILD_ID "none"\n'
-        revision += '#define REVISION "%s"\n' % git_id_text
+        revision += f'#define REVISION "{git_id_text}"\n'
         file_write(
                 revision,
-                '%s/walk-generated/Include/build.h' % g_outdir,
+                f'{g_outdir}/walk-generated/Include/build.h',
                 )
         file_write(
                 revision,
-                '%s/walk-generated/Include/flightgearBuildId.h' % g_outdir,
+                f'{g_outdir}/walk-generated/Include/flightgearBuildId.h',
                 )
 
         file_write(
                 '#pragma once\n' + 'void initFlightGearEmbeddedResources();\n',
-                '%s/walk-generated/EmbeddedResources/FlightGear-resources.hxx' % g_outdir,
+                f'{g_outdir}/walk-generated/EmbeddedResources/FlightGear-resources.hxx',
                 )
 
-        # We should probably have a separate step to build fgrcc and run it to generate
-        # this, but actually it only seems to produce a trivially small generated file.
+        # Generate FlightGear-resources.cxx.
+        #
+        # The cmake build builds and runs fgrcc to generate this file. But
+        # actually it's easier to generate it directly here.
         #
         file_write( textwrap.dedent( '''
                 // -*- coding: utf-8 -*-
                 //
-                // File automatically generated by fgrcc.
+                // File automatically generated by walkfg.py instead of fgrcc.
 
                 #include <memory>
                 #include <utility>
@@ -1723,140 +2151,95 @@ def build( target):
                 }
                 ''')
                 ,
-                '%s/walk-generated/EmbeddedResources/FlightGear-resources.cxx' % g_outdir,
+                f'{g_outdir}/walk-generated/EmbeddedResources/FlightGear-resources.cxx',
                 )
 
         # When we generate C++ source files (not headers), we need to add them to
         # src_fgfs so they get compiled into the final executable.
         #
 
-        src_fgfs.append( '%s/walk-generated/EmbeddedResources/FlightGear-resources.cxx' % g_outdir)
-
+        src_fgfs.append( f'{g_outdir}/walk-generated/EmbeddedResources/FlightGear-resources.cxx')
 
         simgear_version = open('simgear/simgear-version').read().strip()
         file_write(
-                '#define SIMGEAR_VERSION %s\n' % simgear_version,
-                '%s/walk-generated/simgear/version.h' % g_outdir,
+                f'#define SIMGEAR_VERSION {simgear_version}\n',
+                f'{g_outdir}/walk-generated/simgear/version.h',
                 )
         timings.end( 'config')
 
-        timings.begin( 'rcc/uic')
+        timings.begin( 'rcc/uic', 'Generating Qt resources with rcc/uic.')
+        rcc_in = f'flightgear/src/GUI/resources.qrc'
+        rcc_out = f'{g_outdir}/walk-generated/flightgear/src/GUI/qrc_resources.cpp'
         if g_openbsd:
             system(
-                    'rcc'
-                            ' -name resources'
-                            ' -o %s/walk-generated/flightgear/src/GUI/qrc_resources.cpp'
-                            ' flightgear/src/GUI/resources.qrc'
-                            % g_outdir
-                            ,
-                    '%s/walk-generated/flightgear/src/GUI/qrc_resources.cpp.walk' % g_outdir,
-                    'Running rcc on flightgear/src/GUI/resources.qrc',
+                    f'rcc -name resources -o {rcc_out} {rcc_in}',
+                    f'{rcc_out}.walk',
+                    f'Running rcc on {rcc_in}',
                     )
         else:
             system(
-                    '/usr/lib/qt5/bin/rcc'
-                            ' --name resources'
-                            ' --output %s/walk-generated/flightgear/src/GUI/qrc_resources.cpp'
-                            ' flightgear/src/GUI/resources.qrc'
-                            % g_outdir
-                            ,
-                    '%s/walk-generated/flightgear/src/GUI/qrc_resources.cpp.walk' % g_outdir,
-                    'Running rcc on flightgear/src/GUI/resources.qrc',
+                    f'/usr/lib/qt5/bin/rcc --name resources --output {rcc_out} {rcc_in}',
+                    f'{rcc_out}.walk',
+                    f'Running rcc on {rcc_in}',
                     )
-        src_fgfs.append( '%s/walk-generated/flightgear/src/GUI/qrc_resources.cpp' % g_outdir)
+        src_fgfs.append( f'{rcc_out}')
 
         uic = 'uic'
         if g_openbsd:
             uic = '/usr/local/lib/qt5/bin/uic'
         system(
-                '%s -o %s/walk-generated/Include/ui_InstallSceneryDialog.h'
-                        ' flightgear/src/GUI/InstallSceneryDialog.ui' % (uic, g_outdir)
-                        ,
-                '%s/walk-generated/Include/ui_InstallSceneryDialog.h.walk' % g_outdir,
-                'Running uic on flightgear/src/GUI/InstallSceneryDialog.ui',
+                f'{uic} -o {g_outdir}/walk-generated/Include/ui_InstallSceneryDialog.h'
+                    f' flightgear/src/GUI/InstallSceneryDialog.ui'
+                    ,
+                f'{g_outdir}/walk-generated/Include/ui_InstallSceneryDialog.h.walk',
+                f'Running uic on flightgear/src/GUI/InstallSceneryDialog.ui',
                 )
 
         e = system(
-                '%s -o %s/walk-generated/ui_SetupRootDialog.h'
-                        ' flightgear/src/GUI/SetupRootDialog.ui' % (uic, g_outdir)
-                        ,
-                '%s/walk-generated/ui_SetupRootDialog.h.walk' % g_outdir,
-                'Running uic on flightgear/src/GUI/SetupRootDialog.ui',
+                f'{uic} -o {g_outdir}/walk-generated/ui_SetupRootDialog.h'
+                    f' flightgear/src/GUI/SetupRootDialog.ui'
+                    ,
+                f'{g_outdir}/walk-generated/ui_SetupRootDialog.h.walk',
+                f'Running uic on flightgear/src/GUI/SetupRootDialog.ui',
                 )
         timings.end( 'rcc/uic')
 
         # Set up softlinks that look like a plib install - some code requires plib
         # installation header tree.
         #
-        timings.begin( 'plib-install')
+        timings.begin( 'plib-install', 'Setting up softlinks for plib install.')
         def find( root, leaf):
             for dirpath, dirnames, filenames in os.walk( root):
                 if leaf in filenames:
                     return os.path.join( dirpath, leaf)
             assert 0
 
-        dirname = '%s/walk-generated/plib-include/plib' % g_outdir
-        command = 'mkdir -p %s; cd %s' % (dirname, dirname)
+        dirname = f'{g_outdir}/walk-generated/plib-include/plib'
+        command = f'mkdir -p {dirname}; cd {dirname}'
         for leaf in 'pw.h pu.h sg.h netSocket.h js.h ssg.h puAux.h sl.h sm.h sl.h psl.h ul.h pw.h ssgAux.h ssgaSky.h fnt.h ssgaBillboards.h net.h ssgMSFSPalette.h ulRTTI.h puGLUT.h'.split():
             path = find( 'plib/src', leaf)
             #walk.log(f'plib path: {path}')
             path = os.path.abspath( path)
-            command += ' && ln -sf %s %s' % (path, leaf)
+            command += f' && ln -sf {path} {leaf}'
         os.system( command)
         timings.end( 'plib-install')
+    
+    cc_base, cpp_base = compilers_base()
 
-    # Set up compile/link commands.
-    #
-    gcc_base = 'cc'
-    gpp_base = 'c++'
-    
-    if g_linux:
-        if cc_version(gpp_base)[0] == '10':
-            # g++-10 get internal errors for some files.
-            walk.log(f'Forcing gcc-9 and g++-9')
-            gpp_base = 'g++-9'
-            gcc_base = 'gcc-9'
-    
-    gpp_base += ' -std=gnu++17'
-    if g_clang:
-        gcc_base = 'clang -Wno-unknown-warning-option'
-        gpp_base = 'clang++ -std=c++17 -Wno-unknown-warning-option'
-    else:
-        gpp_base += ' -fmax-errors=10'
-    gcc_base += ' -pthread -W -Wall -fPIC -Wno-unused-parameter'
-    gpp_base += ' -pthread -W -Wall -fPIC -Wno-unused-parameter'
-    
     # On Linux we end up with compilation errors if we use the results of the
     # feature checking below. But things seem to build ok without.
     #
     # On OpenBSD, we need to do the feature checks, and they appear to work.
     #
     timings.begin( 'feature-check')
-    cpp_feature_defines = ''
-    if g_openbsd:
-        with open( 'simgear/CMakeModules/CheckCXXFeatures.cmake') as f:
-            text = f.read()
-        for m in re.finditer('check_cxx_source_compiles[(]"([^"]*)" ([A-Z_]+)', text, re.M):
-            code = m.group(1)
-            define = m.group(2)
-            with open( f'{g_outdir}/test.cpp', 'w') as f:
-                f.write(code)
-            e = os.system( f'{gpp_base} -o /dev/null {g_outdir}/test.cpp 1>/dev/null 2>/dev/null')
-            if e == 0:
-                #walk.log( f'c++ feature: defining {define}')
-                cpp_feature_defines += f' -D {define}'
-            else:
-                pass
-                #walk.log( f'c++ feature: not defining {define}')
-        #walk.log( f'cpp_feature_defines: {cpp_feature_defines}')
+    cpp_feature_defines = get_cpp_feature_defines( timings, cpp_base)
     timings.end( 'feature-check')
 
     # Define compile/link commands. For linking, we write the .o filenames to a
     # separate file and use gcc's @<filename> to avoid the command becoming too
     # long.
     #
-    timings.begin( 'commands')
-    link_command = gpp_base
+    link_command = cpp_base
     link_command += ' -rdynamic'    # So backtrace() and backtrace_symbols() see symbols.
     
     if target == 'fgfs':
@@ -1865,16 +2248,16 @@ def build( target):
         exe = f'{g_outdir}/fgfs-test-suite'
     elif target == 'props-test':
         exe = f'{g_outdir}/fgfs-props-test'
-    elif target == 'compression-test':
-        exe = f'{g_outdir}/fgfs-compression-test'
+    elif target == 'yasim-test':
+        exe = f'{g_outdir}/fgfs-yasim-test'
     else:
-        assert 0
+        assert 0, f'Unrecognised target={target}'
 
     if g_clang:
         exe += ',clang'
     if g_build_debug:
         exe += ',debug'
-        link_command += ' -g'
+        link_command += ' -g -gsplit-dwarf'
     if g_build_optimise:
         exe += ',opt'
         link_command += ' -O2'
@@ -1892,54 +2275,25 @@ def build( target):
         exe += ',sgunsafe'
 
     exe += '.exe'
+    if g_verbose >= 1:
+        walk.log( f'Executable is: {exe}')
 
-    # Libraries for which we call pkg-config:
-    #
-    # On OpenBSD, qt requires -L/usr/local/lib but pkg-config Qt* doesn't
-    # provide it. However "pkg-config dbus-1" provides it.
-    #
-    libs = (
-            ' Qt5Core'
-            ' Qt5Gui'
-            ' Qt5Qml'
-            ' Qt5Quick'
-            ' Qt5Widgets'
-            ' dbus-1'
-            ' gl'
-            ' x11'
-            ' liblzma'
-            ' expat'
-            )
-    if not g_osg_dir:
-        libs += ' openscenegraph'
-    
-    if g_openbsd:
-        libs += (
-                ' glu'
-                ' libcurl'
-                ' libevent'
-                ' openal'
-                ' speex'
-                ' speexdsp'
-                )
-    
-    libs_cflags     = ' ' + subprocess.check_output( 'pkg-config --cflags %s' % libs, shell=1).decode( 'latin-1').strip()
-    libs_linkflags  = ' ' + subprocess.check_output( 'pkg-config --libs %s'   % libs, shell=1).decode( 'latin-1').strip()
-    
+    timings.begin( 'link-flags', 'Finding linker flags.')
+    libs, libs_cflags, libs_linkflags = get_lib_flags()
     
     if 0:
         # Show linker information.
         link_command += ' -t'
         link_command += ' --verbose'
     
-    link_command += ' -o %s' % exe
+    link_command += f' -o {exe}'
     
     # 2021-05-22: used to put this at the end of the linker command but this
     # started failing with devuan-5.10.0-6-amd64 - seems like we need to put .o
     # files before .so files in the link command.
     #
-    link_command_extra_path = '%s-link-extra' % exe
-    link_command += ' @%s' % link_command_extra_path
+    link_command_extra_path = f'{exe}-link-extra'
+    link_command += f' @{link_command_extra_path}'
     
     # Other libraries, including OSG.
     #
@@ -2036,69 +2390,92 @@ def build( target):
                 #' -Wl,--trace'
                 )
         
-    link_command += ' %s' % libs_linkflags
+    link_command += f' {libs_linkflags}'
     
     link_command_files = []
+    timings.end( 'link-flags')
 
+    timings.begin( 'source-sort', 'Sorting source files by mtime.')
     # Sort the source files by mtime so that we compile recently-modified ones
     # first, which helps save time when investigating/fixing compile failures.
     #
     src_fgfs.sort( key=lambda path: -walk.mtime( path))
+    timings.end( 'source-sort')
     
     timings.end( 'pre')
     
-    timings.begin( 'compile')
-    
+    timings.begin( 'walk.Concurrent', 'Creating walk.Concurrent instance.')
     # Set things up so walk.py can run compile commands concurrently.
     #
+    concurrency = g_concurrency
+    max_load_average = g_max_load_average
+    if concurrency is None:
+        concurrency = multiprocessing.cpu_count()
+        if g_verbose >= 0:
+            walk.log( f'Using default concurrency of {concurrency}.')
+    if max_load_average is None:
+        max_load_average = concurrency * 2
+        if g_verbose >= 0:
+            walk.log( f'Using default max load average of {max_load_average}.')
     walk_concurrent = walk.Concurrent(
-            g_concurrency,
-            max_load_average=g_max_load_average,
+            concurrency,
+            max_load_average=max_load_average,
             keep_going=g_keep_going,
             )
+    timings.end( 'walk.Concurrent')
     
+    timings.begin( 'compile-flags', 'Setting up compile-flags.')
     cf = make_compile_flags( libs_cflags, cpp_feature_defines)
+    timings.end( 'compile-flags')
 
     try:
 
         # Compile each source file. While doing so, we also add to the final
         # link command.
         #
+        timings.begin( 'compiling', 'Compiling.')
+
+        timings.begin( 'compile-enqueing', 'Compile enqueing.')
+        walk._log_last_t = 0    # Ensure we output 0% diagnostic for first file we look at.
+
         num_compiles_queued = 0
         for i, path in enumerate( src_fgfs):
         
-            def prefixfn():
-                '''
-                Returns percentage formed by blending i/len(src_fgfs) with
-                walk_concurrent.num_commands_run / num_compiles_to_run.
-                '''
+            def get_progress():
+                # We blend i/len(src_fgfs) with
+                # walk_concurrent.num_commands_run / num_compiles_to_run.
                 p = i / len(src_fgfs)
                 if num_compiles_queued:
                     p = walk_concurrent.num_commands_run / (num_compiles_queued * len(src_fgfs)/i)
                 else:
                     p = i / len(src_fgfs)
-                return f'[{100*p:3.0f}%] '
-            walk.log_prefix_set( prefixfn)
-            
-            walk.log_ping( 'looking at: %s' % path, 4)
+                return p
+            _log_prefix.progress = get_progress
+                      
+            if g_verbose >= 0:
+                walk.log_ping( f'Looking at: {path}', 4)
             path_o, doit, reason, e = do_compile(
                     target,
                     walk_concurrent,
-                    gcc_base,
-                    gpp_base,
+                    cc_base,
+                    cpp_base,
                     cf,
                     path,
+                    force=False,
                     )
             if doit:
                 num_compiles_queued += 1
-            link_command_files.append( ' %s' % path_o)
+            link_command_files.append( f' {path_o}')
 
+        timings.end( 'compile-enqueing')
+        
         # Wait for all compile commands to finish before doing the link.
         #
-        walk.log( f'Waiting for {num_compiles_queued} compile tasks to complete')
+        if g_verbose >= 0:
+            walk.log( f'Waiting for {num_compiles_queued} compile tasks to complete')
         
         walk_concurrent.join()
-        timings.end( 'compile')
+        timings.end( 'compiling')
         
         if g_keep_going:
             walk.log(f'calling walk_concurrent.get_errors()')
@@ -2107,8 +2484,8 @@ def build( target):
             if ee:
                 raise Exception(f'Compile errors: {len(ee)}')
         
-        walk.log_prefix_set( '')
-        walk.log( f'Finished compiling. Number of compiles run was {walk_concurrent.num_commands_run}/{walk_concurrent.num_commands}.')
+        if g_verbose >= 0:
+            walk.log( f'Number of compiles run was {walk_concurrent.num_commands_run}/{walk_concurrent.num_commands}.')
         
         link_command_files.sort()
         link_command_files = '\n'.join( link_command_files)
@@ -2118,14 +2495,16 @@ def build( target):
 
         # Tell walk to run our link command if necessary.
         #
-        timings.begin( 'link')
-        
-        system( link_command, '%s.walk' % exe, description='Linking %s' % exe)
+        timings.begin( 'link', 'Linking.')
+        if g_force or g_force is None:
+            system( link_command, f'{exe}.walk', description=f'Linking {exe}')
+        if g_verbose >= 0:
+            walk.log( f'{"Executable:":20s}{exe}')
         timings.end( 'link')
 
         # Create scripts to run our generated executable.
         #
-        walk.log( 'Creating wrapper scripts for fgfs.')
+        timings.begin( 'create-wrapper', f'Creating wrapper scripts for {exe}.')
         for gdb in '', '-gdb':
             script_path = f'{exe}-run{gdb}.sh'
             text = '#!/bin/sh\n'
@@ -2147,8 +2526,11 @@ def build( target):
             else:
                 text += 'exec '
             text += f'{exe} "$@"\n'
-            file_write( text, script_path)
-            os.system( 'chmod u+x %s' % script_path)
+            if g_force or g_force is None:
+                file_write( text, script_path)
+                os.system( f'chmod u+x {script_path}')
+            if g_verbose >= 0:
+                walk.log( f'{"Wrapper script:":20s}{script_path}')
         
         # Make softlinks to most recent build called:
         #
@@ -2158,75 +2540,279 @@ def build( target):
         #
         exe_leaf = os.path.basename(exe)
         rhs = exe_leaf[:exe_leaf.find(',')]
-        os.system( f'cd {g_outdir} && ln -sf {exe_leaf}            {rhs}.exe')
-        os.system( f'cd {g_outdir} && ln -sf {exe_leaf}-run.sh     {rhs}.exe-run.sh')
-        os.system( f'cd {g_outdir} && ln -sf {exe_leaf}-run-gdb.sh {rhs}.exe-run-gdb.sh')
-            
-            
+        def make_link( suffix):
+            if g_force or g_force is None:
+                os.system( f'cd {g_outdir} && ln -sf {exe_leaf}{suffix} {rhs}.exe{suffix}')
+            if g_verbose >= 0:
+                walk.log( f'{"Convenience link:":20s}{g_outdir}/{rhs}.exe{suffix} => {g_outdir}/{exe_leaf}{suffix}')
+        make_link( '')
+        make_link( '-run.sh')
+        make_link( '-run-gdb.sh')
         
-        walk.log_prefix_set( '[100%] ')
-        walk.log( 'Build finished successfully.')
+        timings.end( 'create-wrapper')
+            
+        _log_prefix.progress = 1
+        walk.log( f'Build finished successfully: target={target}')
 
     finally:
 
         # Terminate and wait for walk_concurrent's threads before we finish.
         #
         walk_concurrent.end()
-        walk.log_prefix_set('')
         
-        if g_timings:
-            timings.end()
+        timings.end()
+        if g_show_timings:
             walk.log( f'{timings}')
 
 
-class Args:
+def get_args( argv):
     '''
-    Iterates over argv items. Does getopt-style splitting of args starting with
-    single '-' character.
+    Generator that iterates over argv items. Does getopt-style splitting of
+    args starting with single '-' character.
     '''
-    def __init__( self, argv):
-        self.argv = argv
-        self.pos = 0
-        self.pos_sub = None
-    def __iter__(self):
-        while 1:
-            try:
-                yield self.next()
-            except StopIteration:
-                break
-    def next( self):
-        while 1:
-            if self.pos >= len(self.argv):
-                raise StopIteration()
-            arg = self.argv[self.pos]
-            if (not self.pos_sub
-                    and arg.startswith('-')
-                    and not arg.startswith('--')
-                    and ' ' not in arg
-                    ):
-                # Start splitting current arg.
-                self.pos_sub = 1
-            if self.pos_sub and self.pos_sub >= len(arg):
-                # End of '-' sub-arg.
-                self.pos += 1
-                self.pos_sub = None
-                continue
-            if self.pos_sub:
-                # Return '-' sub-arg.
-                ret = arg[self.pos_sub]
-                self.pos_sub += 1
-                return f'-{ret}'
-            # Return normal arg.
-            self.pos += 1
-            return arg
+    for arg in argv:
+        if arg.startswith('-') and not arg.startswith('--'):
+            for arg2 in arg[1:]:
+                yield '-' + arg2
+        else:
+            yield arg
+
+
+def exception_info(
+        exception_or_traceback=None,
+        limit=None,
+        file=None,
+        chain=True,
+        outer=True,
+        _filelinefn=True,
+        ):
+    '''
+    Shows an exception and/or backtrace.
+
+    Alternative to traceback.* functions that print/return
+    information about exceptions and backtraces, such as:
+
+        traceback.format_exc()
+        traceback.format_exception()
+        traceback.print_exc()
+        traceback.print_exception()
+
+    Install as system default with:
+        sys.excepthook = lambda type_, exception, traceback: exception_info( exception, chain='reverse')
+
+    Returns None, or the generated text if <file> is 'return'.
+
+    Args:
+        exception_or_traceback:
+            None, an Exception or a types.TracebackType. If None we use current
+            exception from sys.exc_info(), otherwise the current backtrace from
+            inspect.stack().
+        limit:
+            As in traceback.* functions: None to show all frames, positive to
+            show last <limit> frames, negative to exclude outermost -limit
+            frames.
+        file:
+            As in traceback.* functions: file-like object to which we write
+            output, or sys.stderr if None. Special value 'return' makes us
+            return our output as a string.
+        chain:
+            As in traceback.* functions: if true we show chained exceptions as
+            described in PEP-3134. Special value 'because' reverses the usual
+            ordering, showing higher-level exceptions first and joining with
+            'Because:' text.
+        outer:
+            If true (the default) we also show an exception's outer frames
+            above the catch block (see below for details). We use outer=false
+            for chained exceptions to avoid duplication.
+        _filelinefn:
+            Internal only; used with doctest - makes us omit file:line:
+            information to allow simple comparison with expected output.
+
+    Differences from traceback.* functions:
+
+        Frames are displayed as one line in the form:
+            <file>:<line>:<function>: <text>
+
+        Filenames are displayed as relative to the current directory if
+        applicable.
+
+        Inclusion of outer frames:
+            Unlike traceback.* functions, stack traces for exceptions include
+            outer stack frames above the point at which an exception was caught
+            - frames from the top-level <module> or thread creation to the
+            catch block. [Search for 'sys.exc_info backtrace incomplete' for
+            more details.]
+
+            We separate the two parts of the backtrace using a marker line
+            '^except raise:' where '^except' points upwards to the frame that
+            caught the exception and 'raise:' refers downwards to the frame
+            that raised the exception.
+
+            So the backtrace for an exception looks like this:
+
+                <file>:<line>:<fn>: <text>  [in root module.]
+                ...                         [... other frames]
+                <file>:<line>:<fn>: <text>  [the except: block where exception was caught.]
+                ^except raise:              [marker line]
+                <file>:<line>:<fn>: <text>  [try: block.]
+                ...                         [... other frames]
+                <file>:<line>:<fn>: <text>  [where the exception was raised.]
+
+    Examples:
+
+        Define some nested function calls which raise and except and call
+        exception_info(). We use file=sys.stdout so we can check the output
+        with doctest, and set _filelinefn=0 so that the output can be matched
+        easily.
+
+        >>> def a():
+        ...     b()
+        >>> def b():
+        ...     try:
+        ...         c()
+        ...     except Exception as e:
+        ...         exception_info( file=sys.stdout, chain=g_chain, _filelinefn=0)
+        >>> def c():
+        ...     try:
+        ...         d()
+        ...     except Exception as e:
+        ...         raise Exception( 'c: d() failed') from e
+        >>> def d():
+        ...     e()
+        >>> def e():
+        ...     raise Exception('e(): deliberate error')
+
+        We use +ELLIPSIS to allow '...' to match arbitrary outer frames from
+        the doctest code itself.
+
+        With chain=True (the default), we output low-level exceptions first,
+        matching the behaviour of traceback.* functions:
+
+        >>> g_chain = True
+        >>> a() # doctest: +REPORT_UDIFF +ELLIPSIS
+        Traceback (most recent call last):
+            c(): d()
+            d(): e()
+            e(): raise Exception('e(): deliberate error')
+        Exception: e(): deliberate error
+        <BLANKLINE>
+        The above exception was the direct cause of the following exception:
+        Traceback (most recent call last):
+            ...
+            <module>(): a() # doctest: +REPORT_UDIFF +ELLIPSIS
+            a(): b()
+            b(): exception_info( file=sys.stdout, chain=g_chain, _filelinefn=0)
+            ^except raise:
+            b(): c()
+            c(): raise Exception( 'c: d() failed') from e
+        Exception: c: d() failed
+
+
+        With chain='because', we output high-level exceptions first:
+
+        >>> g_chain = 'because'
+        >>> a() # doctest: +REPORT_UDIFF +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+            <module>(): a() # doctest: +REPORT_UDIFF +ELLIPSIS
+            a(): b()
+            b(): exception_info( file=sys.stdout, chain=g_chain, _filelinefn=0)
+            ^except raise:
+            b(): c()
+            c(): raise Exception( 'c: d() failed') from e
+        Exception: c: d() failed
+        <BLANKLINE>
+        Because:
+        Traceback (most recent call last):
+            c(): d()
+            d(): e()
+            e(): raise Exception('e(): deliberate error')
+        Exception: e(): deliberate error
+    '''
+    if isinstance( exception_or_traceback, types.TracebackType):
+        exception = None
+        tb = exception_or_traceback
+    elif isinstance( exception_or_traceback, BaseException):
+        exception = exception_or_traceback
+    elif exception_or_traceback:
+        assert 0, f'Unrecognised exception_or_traceback type: {type(exception_or_traceback)}'
+    else:
+        _, exception, tb = sys.exc_info()
+        if not exception:
+            tb = inspect.stack()[1:]
+
+    if file == 'return':
+        out = io.StringIO()
+    else:
+        out = file if file else sys.stderr
+
+    def do_chain( exception):
+        exception_info( exception, limit, out, chain, outer=False, _filelinefn=_filelinefn)
+
+    if exception and chain and chain != 'because':
+        if exception.__cause__:
+            do_chain( exception.__cause__)
+            out.write( '\nThe above exception was the direct cause of the following exception:\n')
+        elif exception.__context__:
+            do_chain( exception.__context__)
+            out.write( '\nDuring handling of the above exception, another exception occurred:\n')
+
+    cwd = os.getcwd() + os.sep
+
+    def output_frames( frames, reverse, limit):
+        if reverse:
+            frames = reversed( frames)
+        if limit is not None:
+            frames = list( frames)
+            frames = frames[ -limit:]
+        for frame in frames:
+            f, filename, line, fnname, text, index = frame
+            text = text[0].strip() if text else ''
+            if filename.startswith( cwd):
+                filename = filename[ len(cwd):]
+            if filename.startswith( f'.{os.sep}'):
+                filename = filename[ 2:]
+            if _filelinefn:
+                out.write( f'    {filename}:{line}:{fnname}(): {text}\n')
+            else:
+                out.write( f'    {fnname}(): {text}\n')
+
+    out.write( 'Traceback (most recent call last):\n')
+    if exception:
+        tb = exception.__traceback__
+        if outer:
+            output_frames( inspect.getouterframes( tb.tb_frame), reverse=True, limit=limit)
+            out.write( '    ^except raise:\n')
+        output_frames( inspect.getinnerframes( tb), reverse=False, limit=None)
+    else:
+        output_frames( tb, reverse=True, limit=limit)
+
+    if exception:
+        lines = traceback.format_exception_only( type(exception), exception)
+        for line in lines:
+            out.write( line)
+
+    if exception and chain == 'because':
+        if exception.__cause__:
+            out.write( '\nBecause:\n')
+            do_chain( exception.__cause__)
+        elif exception.__context__:
+            out.write( '\nBecause error occurred handling this exception:\n')
+            do_chain( exception.__context__)
+
+    if file == 'return':
+        return out.getvalue()
+
 
 def main():
 
+    timings = Timings()
+    
     global g_build_debug
     global g_build_optimise
     global g_clang
     global g_concurrency
-    global g_flags_all
+    global g_verbose
     global g_force
     global g_frame_pointer
     global g_gperf
@@ -2237,21 +2823,17 @@ def main():
     global g_osg_dir
     global g_outdir
     global g_props_locking
-    global g_test_suite
-    global g_timings
-    global g_verbose
+    global g_show_timings
+    global g_walk_verbose
     
     do_build = False
     target = 'fgfs'
     
-    args = Args( sys.argv[1:])
-    if not args.argv:
-        args =  Args( '-j 3 -t -b'.split())
-    
+    args = get_args( sys.argv[1:])    
     while 1:
-        try: arg = args.next()
+        try: arg = next( args)
         except StopIteration: break
-        #walk.log( 'arg=%s' % arg)
+        #walk.log( f'arg={arg}')
         if 0:
             pass
         
@@ -2274,276 +2856,158 @@ def main():
                                 n += 1
             walk.log( f'n={n} t={time.time()-t}')
         elif arg == '--clang':
-            g_clang = int( args.next())
+            g_clang = int( next( args))
         
         elif arg == '--convert-walk-all':
-            root = args.next()
+            root = next( args)
             walk.convert_walk_all( root)
             
         elif arg == '--debug':
-            g_build_debug = int( args.next())
+            g_build_debug = int( next( args))
             walk.log(f'Have set g_build_debug={g_build_debug}')
         
+        elif arg == '--doctest':
+            print( 'Running doctest...')
+            if 0:
+                # Run a specific test.
+                doctest.run_docstring_examples(
+                        Timings,
+                        globals(),
+                        )
+            doctest.testmod(
+                    #verbose=True,
+                    #report=True,
+                    )
+        
         elif arg == '--flags-all':
-            g_flags_all = int( args.next())
+            g_flags_all = int( next( args))
         
         elif arg == '--force':
-            force = args.next()
+            force = next( args)
             if force == 'default':
                 g_force = None
             else:
                 g_force = int( force)
         
         elif arg == '--fp':
-            g_frame_pointer = int( args.next())
+            g_frame_pointer = int( next( args))
         
         elif arg == '--gperf':
-            g_gperf = int( args.next())
+            g_gperf = int( next( args))
         
         elif arg == '-h' or arg == '--help':
             print( __doc__)
         
         elif arg == '-j':
-            g_concurrency = abs(int( args.next()))
+            g_concurrency = abs(int( next( args)))
             assert g_concurrency >= 0
         
         elif arg == '-k':
             g_keep_going = True
         
         elif arg == '-l':
-            g_max_load_average = float( args.next())
+            g_max_load_average = float( next( args))
         
         elif arg == '--link-only':
-            build( g_link_only=True)
+            g_link_only = True
+        
+        elif arg == '-n':
+            g_force = False
         
         elif arg == '--new':
-            path = args.next()
+            path = next( args)
             walk.mtime_cache_mark_new( path)
         
         elif arg == '--old':
             walk.mtime_cache_mark_old( path)
         
         elif arg == '--optimise':
-            g_build_optimise = int( args.next())
+            g_build_optimise = int( next( args))
+        
+        elif arg == '--optimise':
+            g_build_optimise = int( next( args))
+        
+        elif arg == '--optimise-prefix':
+            optimise = int( next( args))
+            prefix = next( args)
+            g_optimise_prefixes.append( (optimise, prefix))
         
         elif arg == '--osg':
-            g_osg = int(args.next())
+            g_osg = int(next( args))
             if g_osg:
                 g_osg_dir = None
         
         elif arg == '--osg-dir':
-            g_osg_dir = args.next()
+            g_osg_dir = next( args)
         
         elif arg == '--out-dir':
-            g_outdir = args.next()
+            g_outdir = next( args)
+        
+        elif arg == '--preprocess':
+            path = next( args)
+            walk_concurrent = walk.Concurrent( 0)
+            preprocess( timings, 'fgfs', path, walk_concurrent)
         
         elif arg == '--props-locking':
-            g_props_locking = int(args.next())
+            g_props_locking = int(next( args))
             print(f'g_props_locking={g_props_locking}')
         
         elif arg == '--show':
-            print( 'concurrency:        %s' % g_concurrency)
-            print( 'debug:              %s' % g_build_debug)
-            print( 'force:              %s' % ('default' if g_force is None else g_force))
-            print( 'clang:              %s' % g_clang)
-            print( 'max_load_average:   %s' % g_max_load_average)
-            print( 'optimise:           %s' % g_build_optimise)
-            print( 'osg:                %s' % g_osg_dir)
-            print( 'outdir:             %s' % g_outdir)
-            print( 'verbose:            %s' % walk.get_verbose( g_verbose))
+            print( f'concurrency:        {g_concurrency}')
+            print( f'debug:              {g_build_debug}')
+            print( f'force:              {("default" if g_force is None else g_force)}')
+            print( f'clang:              {g_clang}')
+            print( f'max_load_average:   {g_max_load_average}')
+            print( f'optimise:           {g_build_optimise}')
+            print( f'osg:                {g_osg_dir}')
+            print( f'outdir:             {g_outdir}')
+            print( f'verbose:            {g_verbose}')
+            print( f'walk-verbose:       {walk.get_verbose( g_walk_verbose)}')
         
         elif arg == '-t':
-            g_timings = True
+            g_show_timings = True
         
         elif arg == '-o':
-            target = args.next()
-            targets = 'fgfs test-suite props-test'.split()
+            target = next( args)
+            targets = 'fgfs test-suite props-test yasim-test'.split()
             assert target in targets, \
                     f'unrecognised target={target} should be one of: {" ".join(targets)}.'
         
-        elif arg == '--verbose' or arg == '-v':
-            v = args.next()
+        elif arg == '-q':
+            g_verbose -= 1
+        
+        elif arg == '-v':
+            g_verbose += 1
+        
+        elif arg == '-w':
+            v = next( args)
             if v.startswith( '+') or v.startswith( '-'):
-                vv = walk.get_verbose( g_verbose)
+                vv = walk.get_verbose( g_walk_verbose)
                 for c in v[1:]:
                     if v[0] == '+':
                         if c not in vv:
                             vv += c
                     else:
                         vv = vv.replace( c, '')
-                g_verbose = vv
+                g_walk_verbose = vv
             else:
-                g_verbose = v
+                g_walk_verbose = v
         
-        elif arg == '--verbose-src':
-            p = args.next()
+        elif arg == '--v-src':
+            p = next( args)
             g_verbose_srcs.append(p)
         
         else:
-            raise Exception( 'Unrecognised arg: %s' % arg)
+            raise Exception( f'Unrecognised arg: {arg}')
     
     if do_build:
-        build( target)
-
-
-def exception_info( exception=None, limit=None, out=None, prefix='', oneline=False):
-    '''
-    General replacement for traceback.* functions that print/return information
-    about exceptions. This function provides a simple way of getting the
-    functionality provided by these traceback functions:
-
-        traceback.format_exc()
-        traceback.format_exception()
-        traceback.print_exc()
-        traceback.print_exception()
-
-    Returns:
-        A string containing description of specified exception and backtrace.
-
-    Inclusion of outer frames:
-        We improve upon traceback.* in that we also include stack frames above
-        the point at which an exception was caught - frames from the top-level
-        <module> or thread creation fn to the try..catch block, which makes
-        backtraces much more useful.
-
-        Google 'sys.exc_info backtrace incomplete' for more details.
-
-        We deliberately leave a slightly curious pair of items in the backtrace
-        - the point in the try: block that ended up raising an exception, and
-        the point in the associated except: block from which we were called.
-
-        For clarity, we insert an empty frame in-between these two items, so
-        that one can easily distinguish the two parts of the backtrace.
-
-        So the backtrace looks like this:
-
-            root (e.g. <module> or /usr/lib/python2.7/threading.py:778:__bootstrap():
-            ...
-            file:line in the except: block where the exception was caught.
-            ::(): marker
-            file:line in the try: block.
-            ...
-            file:line where the exception was raised.
-
-        The items after the ::(): marker are the usual items that traceback.*
-        shows for an exception.
-
-    Also the backtraces that are generated are more concise than those provided
-    by traceback.* - just one line per frame instead of two - and filenames are
-    output relative to the current directory if applicatble. And one can easily
-    prefix all lines with a specified string, e.g. to indent the text.
-
-    Returns a string containing backtrace and exception information, and sends
-    returned string to <out> if specified.
-
-    exception:
-        None, or a (type, value, traceback) tuple, e.g. from sys.exc_info(). If
-        None, we call sys.exc_info() and use its return value.
-    limit:
-        None or maximum number of stackframes to output.
-    out:
-        None or callable taking single <text> parameter or object with a
-        'write' member that takes a single <text> parameter.
-    prefix:
-        Used to prefix all lines of text.
-    '''
-    if exception is None:
-        exception = sys.exc_info()
-    etype, value, tb = exception
-
-    if sys.version_info[0] == 2:
-        out2 = io.BytesIO()
-    else:
-        out2 = io.StringIO()
-    try:
-
-        frames = []
-
-        # Get frames above point at which exception was caught - frames
-        # starting at top-level <module> or thread creation fn, and ending
-        # at the point in the catch: block from which we were called.
-        #
-        # These frames are not included explicitly in sys.exc_info()[2] and are
-        # also omitted by traceback.* functions, which makes for incomplete
-        # backtraces that miss much useful information.
-        #
-        for f in reversed(inspect.getouterframes(tb.tb_frame)):
-            ff = f[1], f[2], f[3], f[4][0].strip()
-            frames.append(ff)
-
-        if 1:
-            # It's useful to see boundary between upper and lower frames.
-            frames.append( None)
-
-        # Append frames from point in the try: block that caused the exception
-        # to be raised, to the point at which the exception was thrown.
-        #
-        # [One can get similar information using traceback.extract_tb(tb):
-        #   for f in traceback.extract_tb(tb):
-        #       frames.append(f)
-        # ]
-        for f in inspect.getinnerframes(tb):
-            ff = f[1], f[2], f[3], f[4][0].strip()
-            frames.append(ff)
-
-        cwd = os.getcwd() + os.sep
-        if oneline:
-            if etype and value:
-                # The 'exception_text' variable below will usually be assigned
-                # something like '<ExceptionType>: <ExceptionValue>', unless
-                # there was no explanatory text provided (e.g. "raise Exception()").
-                # In this case, str(value) will evaluate to ''.
-                exception_text = traceback.format_exception_only(etype, value)[0].strip()
-                filename, line, fnname, text = frames[-1]
-                if filename.startswith(cwd):
-                    filename = filename[len(cwd):]
-                if not str(value):
-                    # The exception doesn't have any useful explanatory text
-                    # (for example, maybe it was raised by an expression like
-                    # "assert <expression>" without a subsequent comma).  In
-                    # the absence of anything more helpful, print the code that
-                    # raised the exception.
-                    exception_text += ' (%s)' % text
-                line = '%s%s at %s:%s:%s()' % (prefix, exception_text, filename, line, fnname)
-                out2.write(line)
-        else:
-            out2.write( '%sBacktrace:\n' % prefix)
-            for frame in frames:
-                if frame is None:
-                    out2.write( '%s    ^except raise:\n' % prefix)
-                    continue
-                filename, line, fnname, text = frame
-                if filename.startswith( cwd):
-                    filename = filename[ len(cwd):]
-                if filename.startswith( './'):
-                    filename = filename[ 2:]
-                out2.write( '%s    %s:%s:%s(): %s\n' % (
-                        prefix, filename, line, fnname, text))
-
-            if etype and value:
-                out2.write( '%sException:\n' % prefix)
-                lines = traceback.format_exception_only( etype, value)
-                for line in lines:
-                    out2.write( '%s    %s' % ( prefix, line))
-
-        text = out2.getvalue()
-
-        # Write text to <out> if specified.
-        out = getattr( out, 'write', out)
-        if callable( out):
-            out( text)
-        return text
-
-    finally:
-        # clear things to avoid cycles.
-        exception = None
-        etype = None
-        value = None
-        tb = None
-        frames = None
+        build( timings, target)
 
 
 if __name__ == '__main__':
+
+    sys.excepthook = lambda type_, exception, traceback: exception_info( exception, chain='reverse')
+    
     if 0:
         import pprofile
         prof = pprofile.StatisticalProfile()
