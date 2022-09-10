@@ -1,66 +1,40 @@
 #! /usr/bin/env python3
 
 '''
-License:
-
-    Copyright 2020-2022 Julian Smith.
-
-    SPDX-License-Identifier: GPL-3.0-only
-
-
 Summary:
 
-    Provides a mechanism for running commands which avoids actually running
-    commands if we can infer that they would not change any generated files.
+    Provides a mechanism for running external commands which avoids actually
+    running these commands if we can infer that they would not change any
+    generated files.
+
+    Copyright 2020-2022 Julian Smith.
+    SPDX-License-Identifier: GPL-3.0-only
 
 
 Use as a build system:
 
-    walk.py allows a build system to be written simply as a list of commands to
-    be run, without specifying detailed dependency information.
+    We allow a build system to be written simply as a list of external commands
+    to be run, with no need for explicit dependency information.
     
     By specifying these commands as calls to walk.system(), we ensure that they
-    will not be run if the command would not modify the generated files, so we
-    end up only running the commands that are necessary to bring things up to
-    date.
+    will not be run if the command would not modify any existing generated
+    files. So we end up running only the commands that are necessary to bring
+    things up to date.
     
-    For example to build a project consisting of two .c files, one could do:
+    For example to build a project consisting of two .c files, one could do (in
+    Python):
     
+        import walk
         walk.system( 'cc -c -o foo.o foo.c', 'foo.o.walk')
         walk.system( 'cc -c -o bar.o bar.c', 'bar.o.walk')
         walk.system( 'cc -o myapp foo.o bar.o', 'myapp.walk')
-    
-    Unlike conventional builds systems, we are is in control of the order in
-    which commands are run, so for example we could choose to compile newer
-    source files first, which often finds compilation errors more quickly.
-
-
-How it works:
-
-    The first time we run a command, we create a file <walk_file> which
-    contains information about the command and the md5 hashes of the files that
-    the command (or its child commands) read.
-
-    On subsequent invocations of the same command, we check the md5 hash of the
-    input files listed in <walk_file> (i.e. those files that were opened for
-    reading). If all of these hashes are unchanged, we do not run the command.
-
-    Otherwise we run the command as before and re-create <walk_file>.
-
-    We specially handle cases such as failed input files (e.g. failed to open
-    for reading) where the file now exists - in this case we always run the
-    command. We also ensure that we are resilient to being interrupted by
-    signals or system crashes. For example we write a zero-length <walk_file>
-    before re-running a command so that if we are killed before the command
-    completes, then the next time we are run we will know the command was
-    interrupted and can force a re-run.
 
 
 Concurrency:
 
-    The Concurrent class allows the running of commands (via walk.system())
-    on internal threads. One can use the .join() method to wait for a set of
-    commands to complete before running further commands.
+    The Concurrent class allows commands to be run concurrently on multiple
+    threads. One can use the .join() method to wait for a set of commands to
+    complete before running further commands.
     
     Example:
 
@@ -84,6 +58,71 @@ Concurrency:
         walk_concurrent.end()
 
 
+Other features:
+    
+    Unlike conventional build systems, we are in control of the order in which
+    commands are run. For example one could choose to compile newer source
+    files first, which often finds compilation errors more quickly when one is
+    developing.
+
+    Commands are always re-run if the command itself has changed. But one can
+    provide a custom comparison function, which allows one to avoid re-running
+    commands if they are changed in only a trivial way. For example one could
+    ignore a compiler's warning flags.
+
+    See walk.system() for details.
+    
+
+How it works:
+
+    The first time we run a command, we create a per-command file <walk_file>
+    which contains the command itself, plus md5 hashes of all files that the
+    command (or its child commands) read or wrote.
+
+    On subsequent invocations of the command, we check for changes to the md5
+    hashes of the files listed in <walk_file>. We also look at whether the
+    command itself has changed.
+    
+    If the command is unchanged and all of the hashes are unchanged, we do not
+    run the command.
+
+    Otherwise we re-run the command and re-create <walk_file>.
+
+    Edge cases:
+    
+        We are careful to handle failure to open input files (e.g. failed to
+        open for reading) where the file now exists - in this case we always
+        run the command.
+
+        We are resilient to being interrupted by signals or system crashes,
+        because we always write a zero-length <walk_file> before re-running a
+        command. If we are killed before the command completes, then the next
+        time we are run we will find this zero-lenth <walk_file> and know the
+        command was interrupted, and will always re-run the command.
+
+
+Implementation details:
+
+    We have two ways of finding out what files a command (or its sub-commands)
+    opened for reading and/or writing:
+    
+    * An LD_PRELOAD library which intercepts open() etc.
+    
+    * Running commands under a syscall tracer:
+        * Linux strace.
+        * OpenBSD ktrace.
+
+    As of 2020-06-01, the LD_PRELOAD approach on Linux doesn't work due to
+    ld appearing to open the output file using a function that has proven
+    difficult to intercept, so we default to using strace.
+
+    On OpenBSD we can use either approach but default to LD_PRELOAD as it
+    appears to be faster.
+
+    If using the LD_PRELOAD approach, we automatically build the library in
+    /tmp as required (walk.py contains the C source code).
+
+
 Command line usage:
 
     We are primarily a python module, but can also be used from the command
@@ -92,18 +131,23 @@ Command line usage:
         walk.py <args> <walk-path> <command> ...
 
     Args:
+        --doctest
+            Runs doctest on the `walk` module.
+        
         --new <path>
             Treat file <path> as new, like make's -W.
             
         -f 0 | 1
-            0 - never run the command.
-            1 - always run the command.
+            Force running/not-running of the command:
+                0 - never run the command.
+                1 - always run the command.
         
         -m preload | trace
-            Force use of preload library or strace/ktrace mechanisms.
+            Override the default use of preload library or strace/ktrace
+            mechanisms.
         
         --test
-            Does some basic tests.
+            Runs some tests.
         
         --test-abc
             For internal use by --test.
@@ -119,28 +163,19 @@ Command line usage:
         walk.py cc myapp.exe.walk -Wall -W -o myapp.exe foo.c bar.c
 
 
-Implementation details:
+Related projects:
 
-    We use two approaches to finding out what files a command (or its
-    sub-command) opened for reading and/or writing - an LD_PRELOAD library
-    which intercepts open() etc, or running commands under a syscall tracer
-    such as Linux's strace or OpenBSD's ktrace.
-
-    As of 2020-06-01, the LD_PRELOAD approach on Linux doesn't work due to
-    ld appearing to open the output file using a function that has proven
-    difficult to intercept. On OpenBSD we can use either approach but default
-    to LD_PRELOAD as it appears to be faster.
-    
-    If using the LD_PRELOAD approach, we automatically create the required
-    library as required (this Python file itself contains the required C source
-    code).
+    https://code.google.com/archive/p/fabricate/
+    https://github.com/buildsome/buildsome/
+    https://github.com/kgaughan/memoize.py
+    https://gittup.org/tup/
 
 
 Future:
 
     Automatic ordering/concurrency:
     
-        It might be possible to use the information in walk files to do
+        It might be possible to use the information in .walk files to do
         automatic command ordering: look at existing build files to find
         dependency information between commands (i.e. find commands whose
         output files are read by other commands) and run commands in the right
@@ -151,35 +186,38 @@ Future:
         commands concurrently when they are known to not depend on each otheer.
 
         Dependency information in walk files is not available the first time a
-        build is run, and might be incorrect if a command has changed, so we'd
-        always have to re-scan walk files after commands have completed and
-        re-run commands in the correct order as required. But most of the time
-        this wouldn't necessary.
+        build is run, and might become incorrect if commands or input files are
+        changed. So we'd always have to re-scan walk files after commands have
+        completed, and re-run commands in the correct order as required. But
+        most of the time this wouldn't be necessary.
     
     Automatic selection of source files:
     
-        A large part of the script for building Flightgear is for selecting the
-        source files to compile and link together.
+        A large part of the Walk build script for building Flightgear is
+        concerned with selecting the source files to compile and link together.
 
-        It might be possible to write code that extracts unresolved and defined
-        symbols after each compilation and saves to a separate file next to the
-        .walk file. Then one could tell the script to compile the file that
-        contains main() and have it automatically look for other files that
-        implement the unresolved symbols.
+        It might be possible to write code that finds the unresolved and
+        defined symbols after each compilation and stores this information
+        in .walk files (or a separate file next to each .walk file. Then one
+        could tell the script to compile the file that contains main() and have
+        it automatically look for, and build, other files that implement the
+        unresolved symbols.
 
         We would need help to resolve situations where more than one file
-        implements the same symbol. And heuristics could be used to find likely
-        source files by grepping for missing symbols names.
+        implements the same symbol. And perhaps heuristics could be used to
+        find likely source files by grepping for missing symbols names.
 '''
 
 
 class CommandFailed( Exception):
     '''
-    Result of running a command.
+    Exception for a failed command.
     '''
     def __init__( self, wait_status, text=None):
         self.wait_status = wait_status
         self.text = text
+    def __str__( self):
+        return f'wait_status={self.wait_status}: {self.text!r}'
 
     
 def system(
@@ -208,9 +246,9 @@ def system(
         command:
             The command to run.
         walk_path:
-            Name of walk file; if it exists it will contain information on what
-            files the command read and wrote. If we run the command, this file
-            is updated.
+            Name of walk file; if it already exists it will contain information
+            on the most recent invocation of the command. If we re-run the
+            command, this file is updated.
         verbose:
             A string where the presence of particular characters controls what
             diagnostics are generated:
@@ -231,22 +269,23 @@ def system(
         description:
             Text used by <verbose>'s 'd' option. E.g. 'Compiling foo.c'.
         method:
-            None, 'preload' or 'trace'.
+            Must be None, 'preload' or 'trace'.
 
-            If None, we use default setting for the OS we are running on.
+            If None, we use the default for the OS we are running on.
 
             If 'trace' we use Linux strace or OpenBSD ktrace to find what file
             operations the command used.
 
-            If 'preload' we include our own code using LD_PRELOAD to find calls
-            to open() etc.
+            If 'preload' we include our own code using LD_PRELOAD which
+            intercepts calls to open() etc.
         command_compare:
             If not None, should be callable taking two string commands, and
             return non-zero if these commands differ significantly.
 
-            E.g. for gcc-style compilation commands this could ignore any -W*
-            args to avoid unnecessary recompilation caused by changes only to
-            warning flags.
+            For example this can be useful for gcc-style compilation commands
+            if one specifies a function that ignores any -W* args. This will
+            avoid unnecessary recompilation caused by changes only to warning
+            flags.
         out:
             Where the command's stdout and stderr go:
                 None:
@@ -268,10 +307,11 @@ def system(
             If not None, prepended to each line sent to <out>.
         out_buffer:
             If true, we buffer up output and send to <out> in one call after
-            command has terminated.
+            command has terminated. Otherwise if false (the default) typically
+            <out> will be called multiple times.
         use_hash:
-            If true (the default) we use md5 hash, otherwise we use mtime, when
-            deciding whether a file should cause the command to be run.
+            If true (the default) we use md5 hashes to detect whether files have
+            changed. Otherwise if false we use file mtimes.
     '''
     doit, reason = system_check(
             walk_path,
@@ -927,6 +967,17 @@ def _system(
         false   true    None or raise CommandFailed instance.
         true    false   (wait_status, out_text)
         true    true    out_text or raise CommandFailed instance.
+
+    >>> _system( 'echo hello world; false', out=subprocess.DEVNULL, capture=False, throw=False)
+    1
+    >>> _system( 'echo hello world; false', out=subprocess.DEVNULL, capture=False, throw=True)
+    Traceback (most recent call last):
+    CommandFailed: wait_status=1: None
+    >>> _system( 'echo hello world; false', out=subprocess.DEVNULL, capture=True, throw=False)
+    (1, 'hello world\\n')
+    >>> _system( 'echo hello world; false', out=subprocess.DEVNULL, capture=True, throw=True)
+    Traceback (most recent call last):
+    CommandFailed: wait_status=1: 'hello world\\n'
     '''
     stdout = out
     
@@ -968,7 +1019,8 @@ def _system(
         for line in child_out:
             #log( f'out_prefix={out_prefix!r}. have read line={line!r}')
             if not out_buffer:
-                outfn( out_prefix + line)
+                if outfn:
+                    outfn( out_prefix + line)
             if buffer_:
                 buffer_.write( line)
     
@@ -983,10 +1035,11 @@ def _system(
             lines = t.split('\n')
             t = [out_prefix + line for line in lines]
             t = '\n'.join(t)
-        outfn( t)
+        if outfn:
+            outfn( t)
     
     if wait_status and throw:
-        raise SystemFailed( wait_status, text)
+        raise CommandFailed( wait_status, text)
     if capture:
         return wait_status, text
     return wait_status
@@ -1039,7 +1092,7 @@ def system_check( walk_path, command, command_compare=None, force=None, use_hash
     Returns (doit, reason):
         doit:
             True iff command should be run again.
-        explanation:
+        reason:
             Text description of why <doit> is set to true/false.
     '''
     if force is not None:
@@ -1050,13 +1103,11 @@ def system_check( walk_path, command, command_compare=None, force=None, use_hash
     
     reason = []
     verbose = 0
-    #verbose = walk_path.endswith('/main.cxx,clang,debug,opt,osg.o.walk')
     
     try:
         f = open( walk_path, 'rb')
     except Exception as e:
         doit = True
-        #reason.append( f'Failed to open walk file {walk_path}: {e}')
         reason.append( f'No previous build')
         return doit, reason
     
@@ -1065,7 +1116,6 @@ def system_check( walk_path, command, command_compare=None, force=None, use_hash
             w = pickle.load( f)
         except Exception as e:
             doit = True
-            #reason.append( f'Failed to unpickle walk file {walk_path}: {e}')
             reason.append( f'Previous build interrupted')
             return doit, reason
     if w is None or isinstance(w, int):
@@ -1087,7 +1137,7 @@ def system_check( walk_path, command, command_compare=None, force=None, use_hash
             log( f'    to   {command}')
         return True, 'command has changed'
 
-    # If use_hash is alse, we want to find oldest file that was opened for
+    # If use_hash is false, we want to find oldest file that was opened for
     # writing by previous invocation of this command, and the newest file that
     # was opened for reading. If the current mtime of the newest read file is
     # older than the current mtime of the oldest written file, then we don't
@@ -1147,12 +1197,12 @@ def system_check( walk_path, command, command_compare=None, force=None, use_hash
             #    continue
 
             if _openbsd and path == '/var/run/ld.so.hints':
-                # This is always new, so messes things up.
+                # This is always new, so messes things up unless we ignore it.
                 continue
 
             if _linux and path.startswith( '/etc/ld.so'):
                 # This is sometimes updated (maybe after apt install?), so
-                # messes things up.
+                # messes things up unless we ignore it.
                 continue
 
         # mtime() can be slow so we only call it if we need to. If we have
@@ -1200,7 +1250,8 @@ def system_check( walk_path, command, command_compare=None, force=None, use_hash
                 use_mtime = True
             
             # Currently we always look at mtime even if we also use hash, but
-            # this could be 'if not use_hash: ...'.
+            # this could be 'if not use_hash: ...', as long as we update
+            # earlier hash code to force rebuild if file no longer exists.
             if 1:
                 #log(f'read_or_hash not hash: {read_or_hash}')
                 if t == -1:
@@ -1250,7 +1301,7 @@ def system_check( walk_path, command, command_compare=None, force=None, use_hash
         reason.append( f'hash changed: {os.path.relpath(read_hash_changed_path)}')
     elif oldest_write == 0:
         doit = True
-        reason.append( f'Output file not present:{oldest_write_path}')
+        reason.append( f'Output file not present: {oldest_write_path}')
     elif newest_read > oldest_write:
         if use_hash and not use_mtime:
             # If we get here, no hash changed was detected, so we will not be
@@ -2341,7 +2392,7 @@ def _do_test( use_hash, method):
     
 def _do_tests( use_hashs, methods):
     '''
-    Runs tests for all combinations in <use_hashs> and <methods>.
+    Runs tests for all combinations of <use_hashs> and <methods>.
     '''
     if not isinstance( use_hashs, (tuple, list)):
         use_hashs = use_hashs,
@@ -2413,7 +2464,7 @@ def main():
             else:
                 methods = ('trace',)
             use_hashs = True, False
-            _do_tests( use_hashs,  methods)
+            _do_tests( use_hashs, methods)
         
         elif arg == '--test-abc':
             a = next( args)
@@ -2449,4 +2500,8 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    if len( sys.argv) == 2 and sys.argv[1] == '--doctest':
+        import doctest
+        doctest.testmod()
+    else:
+        main()
