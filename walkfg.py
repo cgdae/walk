@@ -1,8 +1,38 @@
 #!/usr/bin/env python3
 
-r'''Build script for Flightgear on Unix systems.
+r'''
+    Build script for Flightgear on Unix systems.
 
-Usage:
+    Copyright 2020-2022 Julian Smith.
+    SPDX-License-Identifier: GPL-3.0-only
+
+
+Example usage:
+    
+    # Install packages such as qtbase5-dev, openscenegraph etc.
+
+    # Get Flightgear code:
+    #
+    git clone https://git.code.sf.net/p/flightgear/flightgear
+    git clone https://git.code.sf.net/p/flightgear/simgear
+    git clone https://git.code.sf.net/p/flightgear/fgdata
+    git clone https://git.code.sf.net/p/libplib/code plib
+    
+    # Get Walk build system:
+    #
+    git clone https://git.code.sf.net/p/walk/walk
+    
+    # Build Flightgear:
+    #
+    ./walk/walkfg.py -b
+    
+    # Run Flightgear:
+    #
+    ./build-walk/fgfs.exe-run.sh
+
+
+Details:
+
     We expect to be in a directory containing the following git checkouts:
         flightgear/
         plib/
@@ -211,25 +241,6 @@ Requirements:
                     qtdeclarative \
 '''
 
-'''
-License:
-    Copyright 2020-2022 Julian Smith.
-
-    This program is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <https://www.gnu.org/licenses/>.
-'''
-
-import doctest
 import glob
 import inspect
 import io
@@ -2870,6 +2881,7 @@ def main():
         
         elif arg == '--doctest':
             print( 'Running doctest...')
+            import doctest
             if 0:
                 # Run a specific test.
                 doctest.run_docstring_examples(
