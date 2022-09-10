@@ -670,6 +670,8 @@ def get_files( target):
             'simgear/simgear/sound/soundmgr_test.cxx',
             'simgear/simgear/std/integer_sequence_test.cxx',
             'simgear/simgear/std/type_traits_test.cxx',
+            'simgear/simgear/structure/event_mgr_test.cxx',
+            'simgear/simgear/structure/test_*',
             'simgear/simgear/structure/SGAction.cxx',
             'simgear/simgear/structure/expression_test.cxx',
             'simgear/simgear/structure/function_list_test.cxx',
