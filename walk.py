@@ -209,17 +209,6 @@ Future:
 '''
 
 
-class CommandFailed( Exception):
-    '''
-    Exception for a failed command.
-    '''
-    def __init__( self, wait_status, text=None):
-        self.wait_status = wait_status
-        self.text = text
-    def __str__( self):
-        return f'wait_status={self.wait_status}: {self.text!r}'
-
-    
 def system(
         command,
         walk_path,
@@ -336,6 +325,17 @@ def system(
             )
 
 
+class CommandFailed( Exception):
+    '''
+    Exception for a failed command.
+    '''
+    def __init__( self, wait_status, text=None):
+        self.wait_status = wait_status
+        self.text = text
+    def __str__( self):
+        return f'wait_status={self.wait_status}: {self.text!r}'
+
+    
 class Concurrent:
     '''
     Support for running commands concurrently.
