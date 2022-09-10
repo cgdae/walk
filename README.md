@@ -1,4 +1,5 @@
 <!--
+multimarkdown README.md > README.md.html
 markdown_py -v -x markdown.extensions.toc README.md > README.md.html
 [TOC]
 -->
@@ -8,17 +9,17 @@ markdown_py -v -x markdown.extensions.toc README.md > README.md.html
 
 ## Overview
 
-`walk.py` is a Python module that provides a mechanism for running commands,
-where commands are not run if Walk can infer that they would not change any
-generated files.
+Walk is a Python module that provides a mechanism for running commands, where
+commands are not run if Walk can infer that they would not change any generated
+files.
 
 * An `LD_PRELOAD` library or syscall tracing is used to detect what files a
 command reads and/or writes.
 
 * Tested and used on Linux and OpenBSD.
 
-* Also provided is an example Python script `walkfg.py` which uses `walk.py` to
-work as a build system for the [Flightgear](https://flightgear.org) open-source
+* Also provided is an example Python script `walkfg.py` which uses Walk to work
+as a build system for the [Flightgear](https://flightgear.org) open-source
 flight simulator.
 
 
@@ -64,18 +65,18 @@ walk.system( 'cc -o myapp foo.o bar.o', 'myapp.walk')
 
     By default commands are always re-run if the command itself has changed.
 
-    But one can provide a custom comparison function, which allows one to avoid
+    One can provide a custom comparison function, which allows one to avoid
     re-running commands if they are changed in only a trivial way. For example
     the `walkfg.py` Flightgear build script ignores changes to the compiler's
     `-W*` warning flags.
 
 * **Verbose output only on failure**
 
-    By default Walk only shows the commands it is running if they fail. This
-    gives concise output but, unlike `make -s` for example, it still allows one
-    to see the details of failing commands.
+    By default Walk only shows commands if they have failed. This gives concise
+    output but, unlike `make -s` for example, it still allows one to see the
+    details of failed commands.
 
-    [Of course command _output_ is always shown by default.]
+    [Command _output_ is always shown by default.]
     
 
 ## Concurrency
@@ -131,7 +132,7 @@ On OpenBSD both approaches work but Walk defaults to `LD_PRELOAD` as it appears
 to be slightly faster.
 
 If using the `LD_PRELOAD` approach, Walk automatically builds the library in
-`/tmp` as required (`walk.py` contains the C source code).
+`/tmp` as required (Walk contains the C source code).
 
 
 ### Managing `.walk` files
@@ -167,41 +168,18 @@ interrupted, and will always re-run the command.
 
 Walk is primarily a python module, but can also be used from the command line:
 
-    walk.py <args> <walk-path> <command> ...
-
-Args:
-
-    --doctest
-        Runs doctest on the `walk` module.
-
-    --new <path>
-        Treat file <path> as new, like make's -W.
-
-    -f 0 | 1
-        Force running/not-running of the command:
-            0 - never run the command.
-            1 - always run the command.
-
-    -m preload | trace
-        Override the default use of preload library or strace/ktrace
-        mechanisms.
-
-    --test
-        Runs some tests.
-
-    --test-abc
-        For internal use by --test.
-
-    --test-profile <walk>
-        Measures speed of processing walk file.
-
-    --time-load-all <root>
-        Times processing of all .walk files within <root>.
+    walk/__init__.py <args> <walk-path> <command> ...
 
 For example:
 
 ```shell
-walk.py cc myapp.exe.walk -Wall -W -o myapp.exe foo.c bar.c
+walk.py myapp.exe.walk cc -Wall -W -o myapp.exe foo.c bar.c
+```
+
+For more information run:
+
+```shell
+walk/__init__.py -h
 ```
 
 
