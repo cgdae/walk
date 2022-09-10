@@ -44,6 +44,7 @@ def system(
 
                 c   Show the command itself if we run the command.
                 d   Show command description if we run the command.
+                e   Show command if it failed and 'c' was not specified.
                 m   Show generic message if we are running the command.
                 r   Show the reason for running the command.
 
