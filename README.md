@@ -1,147 +1,214 @@
-## A Build system using command optimisation / automatic dependencies
+# Walk
 
-Core system: walk.py.
+## Overview
 
-A build system for flightgear: walkfg.py.
+`walk.py` is a Python module that provides a mechanism for running external
+commands, which avoids running these commands if we can infer that they would
+not change any generated files.
 
-### Summary:
-
-    Provides a mechanism for running commands which avoids actually running
-    commands if we can infer that they would not change any generated files.
-    
-    As of 2021-06-24 we use md5 hashes to detect changes to files, instead of
-    mtimes.
+Also provided is a Python script `walkfg.py` which uses `walk.py` to build
+the [Flightgear](https://flightgear.org) open-source flight simulator.
 
 
-### Use as a build system:
+## Use as a build system
 
-    walk.py allows a build system to be written simply as a list of commands to
-    be run, without specifying detailed dependency information.
-    
-    By specifying these commands as calls to walk.system(), we ensure that they
-    will not be run if the command would not modify the generated files, so we
-    end up only running the commands that are necessary to bring things up to
-    date.
-    
-    For example to build a project consisting of two .c files, one could do:
-    
-        walk.system( 'cc -c -o foo.o foo.c', 'foo.o.walk')
-        walk.system( 'cc -c -o bar.o bar.c', 'bar.o.walk')
-        walk.system( 'cc -o myapp foo.o bar.o', 'myapp.walk')
-    
-    Unlike conventional builds systems, we are is in control of the order in
-    which commands are run, so for example we could choose to compile newer
-    source files first, which often finds compilation errors more quickly.
+Walk allows a build system to be written simply as a list of external commands
+to be run, with no need for explicit dependency information.
+
+By specifying these commands as calls to `walk.system()`, we ensure that
+they will not be run if the command would not modify any existing generated
+files. So we end up running only the commands that are necessary to bring
+things up to date.
+
+For example to build a project consisting of two `.c` files, one could do (in
+Python):
+
+    import walk
+    walk.system( 'cc -c -o foo.o foo.c', 'foo.o.walk')
+    walk.system( 'cc -c -o bar.o bar.c', 'bar.o.walk')
+    walk.system( 'cc -o myapp foo.o bar.o', 'myapp.walk')
 
 
-### Example building of Flightgear (next branch) from scratch:
+## Concurrency
 
-    Install packages such as qtbase5-dev, openscenegraph etc.
+The Concurrent class allows commands to be run concurrently on multiple
+threads. One can use the `.join()` method to wait for a set of commands to
+complete before running further commands.
 
-    # Get Flightgear code:
+### Example:
+
+    # Create multiple internal worker threads.
     #
-    git clone https://git.code.sf.net/p/flightgear/flightgear
-    git clone https://git.code.sf.net/p/flightgear/simgear
-    git clone https://git.code.sf.net/p/flightgear/fgdata
-    git clone https://git.code.sf.net/p/libplib/code plib
-    
-    # Get Walk build system:
+    walk_concurrent = walk.Concurrent( num_threads=3)
+
+    # Schedule commands to be run concurrently.
     #
-    git clone https://git.code.sf.net/p/walk/walk
-    
-    # Build Flightgear:
+    walk_concurrent.system( 'cc -c -o foo.o foo.c', 'foo.o.walk')
+    walk_concurrent.system( 'cc -c -o bar.o bar.c', 'bar.o.walk')
+    ...
+
+    # Wait for all scheduled commands to complete.
     #
-    ./walk/walkfg.py
-    
-    # Run Flightgear:
+    walk_concurrent.join()
+
+    # Run more commands.
     #
-    ./build-walk/fgfs.exe-run.sh
+    walk.system( 'cc -o myapp foo.o bar.o', 'myapp.walk')
+    walk_concurrent.end()
 
 
-### How it works:
-
-    The first time we run a command, we create a file <walk_file> which
-    contains information about the command and what files the command (or its
-    child commands) read or wrote.
-
-    On subsequent invocations of the same command, we check whether the files
-    listed in <walk_file> have changed, using md5 hashes. If all input files
-    (e.g. opened for reading) are unchanged, we do not run the command.
-
-    Otherwise we run the command as before and re-create <walk_file>.
-
-    We specially handle cases such as failed input files (e.g. failed to open
-    for reading) where the file now exists - in this case we always run the
-    command. We also ensure that we are resilient to being interrupted by
-    signals or system crashes. For example we write a zero-length <walk_file>
-    before re-running a command so that if we are killed before the command
-    completes, then the next we are run we will know the command was
-    interrupted and can force a re-run.
-
-
-### Concurrency:
-
-    The Concurrent class allows the running of commands (via walk.system())
-    on internal threads. One can use the .join() method to wait for a set of
-    commands to complete before running further commands.
+## Other features
     
-    Example:
+Unlike conventional build systems, we are in control of the order in which
+commands are run. For example one could choose to compile newer source
+files first, which often finds compilation errors more quickly when one is
+developing.
 
-        # Create multiple internal worker threads.
-        #
-        walk_concurrent = walk.Concurrent( num_threads=3)
-        
-        # Schedule commands to be run concurrently.
-        #
-        walk_concurrent.system( 'cc -c -o foo.o foo.c', 'foo.o.walk')
-        walk_concurrent.system( 'cc -c -o bar.o bar.c', 'bar.o.walk')
-        ...
-        
-        # Wait for all scheduled commands to complete.
-        #
-        walk_concurrent.join()
-        
-        # Run more commands.
-        #
-        walk.system( 'cc -o myapp foo.o bar.o', 'myapp.walk')
-        walk_concurrent.end()
+Commands are always re-run if the command itself has changed. But one can
+provide a custom comparison function, which allows one to avoid re-running
+commands if they are changed in only a trivial way. For example one could
+ignore a compiler's warning flags.
+
+See `walk.system()` for more details.
+    
+
+## How it works
+
+The first time we run a command, we create a per-command `.walk` file which
+contains the command itself, plus md5 hashes of all files that the command (or
+its child commands) read or wrote.
+
+On subsequent invocations of the command, we check for changes to the md5
+hashes of the files listed in the `.walk` file. We also look at whether the
+command itself has changed.
+
+If the command is unchanged and all of the hashes are unchanged, we do not run
+the command.
+
+Otherwise we re-run the command and re-create the `.walk` file.
 
 
-### Command line usage:
+### Edge cases
+    
+We are careful to handle failure to open input files (e.g. failed to open for
+reading) where the file now exists - in this case we always run the command.
 
-    We are primarily a python module, but can also be used from the command
-    line:
+We are resilient to being interrupted by signals or system crashes, because we
+always write a zero-length `.walk` file before re-running a command. If we are
+killed before the command completes, then the next time we are run we will find
+this zero-lenth `.walk` file and know the command was interrupted, and will
+always re-run the command.
 
-        walk.py [<args>] <walk-path> <command> ...
 
-    Args:
-        --new <path>
-            Treat file <path> as new, like make's -W.
-            
-        -f 0 | 1
+## Implementation details
+
+We have two ways of finding out what files a command (or its sub-commands)
+opened for reading and/or writing:
+
+* An `LD_PRELOAD` library which intercepts `open()` etc.
+
+* Running commands under a syscall tracer:
+
+    * Linux `strace`.
+    * OpenBSD `ktrace`.
+
+As of 2020-06-01, the `LD_PRELOAD` approach on Linux doesn't work due to the
+`ld` linker appearing to open the output file using a direct syscall (which
+cannot be easily intercepted by our preload library), so we default to using
+`strace`.
+
+On OpenBSD we can use either approach but default to `LD_PRELOAD` as it appears
+to be slightly faster.
+
+If using the `LD_PRELOAD` approach, we automatically build the library in
+`/tmp` as required (walk.py contains the C source code).
+
+
+## Command line usage
+
+We are primarily a python module, but can also be used from the command
+line:
+
+    walk.py <args> <walk-path> <command> ...
+
+Args:
+
+    --doctest
+        Runs doctest on the `walk` module.
+
+    --new <path>
+        Treat file <path> as new, like make's -W.
+
+    -f 0 | 1
+        Force running/not-running of the command:
             0 - never run the command.
             1 - always run the command.
-        
-        --test
-            Does some basic tests.
 
-    Examples:
+    -m preload | trace
+        Override the default use of preload library or strace/ktrace
+        mechanisms.
 
-        walk.py cc myapp.exe.walk -Wall -W -o myapp.exe foo.c bar.c
+    --test
+        Runs some tests.
+
+    --test-abc
+        For internal use by --test.
+
+    --test-profile <walk>
+        Measures speed of processing walk file.
+
+    --time-load-all <root>
+        Times processing of all .walk files within <root>.
+
+### Examples
+
+    walk.py cc myapp.exe.walk -Wall -W -o myapp.exe foo.c bar.c
 
 
-### Implementation details:
+## Related projects
 
-    We use two approaches to finding out what files a command (or its
-    sub-command) opened for reading and/or writing - an LD_PRELOAD library
-    which intercepts open() etc, or running commands under a syscall tracer
-    such as Linux's strace or OpenBSD's ktrace.
+* [https://code.google.com/archive/p/fabricate/](https://code.google.com/archive/p/fabricate/)
+* [https://github.com/buildsome/buildsome/](https://github.com/buildsome/buildsome/)
+* [https://github.com/kgaughan/memoize.py](https://github.com/kgaughan/memoize.py)
+* [https://gittup.org/tup/](https://gittup.org/tup/)
 
-    As of 2020-06-01, the LD_PRELOAD approach on Linux doesn't work due to
-    ld appearing to open the output file using a function that has proven
-    difficult to intercept. On OpenBSD we can use either approach but default
-    to LD_PRELOAD.
 
-    It's not yet clear which of LD_PRELOAD or strace/ktrace is the better
-    approach overall; maybe LD_PRELOAD could be faster (though this needs
-    profiling) but tracing syscalls could be more reliable.
+## Future
+
+### Automatic ordering/concurrency
+    
+It might be possible to use the information in `.walk` files to do automatic
+command ordering: look at existing build files to find dependency information
+between commands (i.e. find commands whose output files are read by other
+commands) and run commands in the right order without the caller needing to
+specify anything other than an unordered list of commands.
+
+This could be extended to do automatic concurrency - run multiple commands
+concurrently when they are known to not depend on each otheer.
+
+Dependency information in walk files is not available the first time a build is
+run, and might become incorrect if commands or input files are changed. So we'd
+always have to re-scan walk files after commands have completed, and re-run
+commands in the correct order as required. But most of the time this wouldn't
+be necessary.
+    
+### Automatic selection of source files
+    
+A large part of the Walk build script for building Flightgear is concerned with
+selecting the source files to compile and link together.
+
+It might be possible to write code that finds the unresolved and defined
+symbols after each compilation and stores this information in .walk files (or
+a separate file next to each .walk file. Then one could tell the script to
+compile the file that contains main() and have it automatically look for, and
+build, other files that implement the unresolved symbols.
+
+We would need help to resolve situations where more than one file implements
+the same symbol. And perhaps heuristics could be used to find likely source
+files by grepping for missing symbols names.
+
+
+## License
+
+    Copyright 2020-2022 Julian Smith.
+    SPDX-License-Identifier: GPL-3.0-only
