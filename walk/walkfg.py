@@ -9,55 +9,61 @@ r'''
 
 Example usage:
     
-    # Install packages such as qtbase5-dev, openscenegraph etc.
+    * Install packages such as `qtbase5-dev`, `openscenegraph` etc.
 
-    # Get Flightgear code:
-    #
-    git clone https://git.code.sf.net/p/flightgear/flightgear
-    git clone https://git.code.sf.net/p/flightgear/simgear
-    git clone https://git.code.sf.net/p/flightgear/fgdata
-    git clone https://git.code.sf.net/p/libplib/code plib
+    * Get Flightgear code::
     
-    # Get Walk build system:
-    #
-    git clone https://git.code.sf.net/p/walk/walk
+        git clone https://git.code.sf.net/p/flightgear/flightgear
+        git clone https://git.code.sf.net/p/flightgear/simgear
+        git clone https://git.code.sf.net/p/flightgear/fgdata
+        git clone https://git.code.sf.net/p/libplib/code plib
     
-    # Build Flightgear:
-    #
-    ./walk/walkfg.py -b
+    * Get Walk build system::
     
-    # Run Flightgear:
-    #
-    ./build-walk/fgfs.exe-run.sh
+        git clone https://git.code.sf.net/p/walk/walk
+    
+    * Build Flightgear::
+    
+        ./walk/walk/walkfg.py -b
+    
+    * Run Flightgear::
+    
+        ./build-walk/fgfs.exe-run.sh
 
 
 Details:
 
-    We expect to be in a directory containing the following git checkouts:
+    We expect to be in a directory containing the following git checkouts::
+    
         flightgear/
         plib/
         simgear/
         fgdata/
-        
+    
     In this directory, run this script (wherever it happens to be) with the
-    '-b' flag so it builds Flightgear.
+    '-b' flag so it builds Flightgear::
+    
         .../walkfg.py -b
     
-    All generated files will be in a new directory:    
+    All generated files will be in a new directory::
+    
         build-walk/
-        
+    
     The generated executable and wrapper scripts include information in their
-    names to distinguish different builds:
+    names to distinguish different builds::
+    
         build-walk/fgfs,<flags>.exe
         build-walk/fgfs,<flags>.exe-run.sh
         build-walk/fgfs,<flags>.exe-run-gdb.sh
     
-    For convenience we generate soft-links to the most recent build:
+    For convenience we generate soft-links to the most recent build::
+    
         build-walk/fgfs.exe
         build-walk/fgfs.exe-run.sh
         build-walk/fgfs.exe-run-gdb.sh
-        
-    So Flightgear can be run with:
+    
+    So Flightgear can be run with::
+    
         build-walk/fgfs.exe-run.sh --aircraft=... --airport=... ...
 
 Args:
@@ -67,21 +73,21 @@ Args:
     --clang 0 | 1
         If 1, we force use of clang instead of system compiler. Default is 0.
     --debug 0 | 1
-        If 1 (default), we compile and link with -g to include debug symbols.    
+        If 1 (default), we compile and link with `-g` to include debug symbols.    
     --optimise-prefix 0|1 <prefix>
-        Force optimise/no-optimise build for paths starting with <prefix>.
+        Force optimise/no-optimise build for paths starting with `prefix`.
     --doctest
         Run doctest on this module.    
     --flags-all 0 | 1
         If 1, we use same compiler flags for all files (except for
-        file-specific -W warning flags). So for example everything gets
+        file-specific `-W` warning flags). So for example everything gets
         compiled with the same include path and defines.
         
         Default is 0 - files get compiled with flags specific to their
         location; this avoids unnecessary recompilation if flags for specific
         files or locations are changed.
     --force 0 | 1 | default
-        If '0', we never run commands; depending on -v and -w, we may output
+        If '0', we never run commands; depending on `-v` and `-w`, we may output
         diagnostics about what we would have run.
 
         If '1', we always run commands, regardless of whether output files are up
@@ -91,33 +97,35 @@ Args:
         default.    
     --fp 0 | 1
         If 1 we force use of frame pointer with
-        -fno-omit-frame-pointer. Default is 0.
+        `-fno-omit-frame-pointer`. Default is 0.
     --gperf 0 | 1
         If 1, build with support for google perf.    
     -h
     --help
         Show help.    
     -j N
-        Set concurrency level - the maximum number of concurrent
-        compiles. Default is derived from Python's multiprocessing.cpu_count().    
+        Set concurrency level - the maximum number of
+        concurrent compiles. Default is derived from Python's
+        `multiprocessing.cpu_count()`.
     -l <maxload>
         Only schedule new concurrent commands when load average
-        is less than <maxload>. Default is derived from Python's
-        multiprocessing.cpu_count().    
+        is less than `maxload`. Default is derived from Python's
+        `multiprocessing.cpu_count()`.    
     --link-only
         Only do link, do not compile.    
     -n
-        Don't run commands. Equivalent to '--force 0'.    
+        Don't run commands. Equivalent to '--force 0'.
     --new <path>
-        Treat <path> as new.
+        Treat `path` as new.
     --old <path>
-        Treat <path> as old.    
+        Treat `path` as old.    
     --optimise 0 | 1
         If 1 (the default), we build with compiler optimisations.    
     --osg-dir <directory>
         Use local OSG install instead of system OSG.
         
-        For example:
+        For example::
+        
             time (true \
                     && cd openscenegraph \
                     && git checkout OpenSceneGraph-3.6 \
@@ -143,9 +151,9 @@ Args:
             .../walkfg.py --osg openscenegraph/build-relwithdebinfo/install -b    
     
     -o fgfs | test-suite | props-test | yasim-test
-        Set what to build. Default is fgfs, the main Flightgear executable.    
+        Set what to build. Default is **fgfs**, the main Flightgear executable.    
     --osg 0|1
-        Experimental: if 1, we also compile files in openscenegraph/ instead of
+        Experimental: if 1, we also compile files in `openscenegraph/` instead of
         using an existing build.
         
         As of 2021-11-06, this does not work because the build does not create
@@ -153,38 +161,38 @@ Args:
     --out-dir <directory>
         Set the directory that will contain all generated files.
         
-        Default is build-walk.    
+        Default is `build-walk/`.    
     --props-locking 0 | 1
-        If 0, build with SG_PROPS_UNTHREADSAFE pre-defined.    
+        If 0, build with `SG_PROPS_UNTHREADSAFE` pre-defined.    
     -q
-        Reduce diagnostics (use -v to increase).    
+        Reduce diagnostics (use `-v` to increase).    
     --show
         Show settings.    
     -t
         Show detailed timing information at end.    
     -v
-        Increase diagnostics (use -v to decrease).    
+        Increase diagnostics (use `-v` to decrease).    
     --v-src <path>
-        Show compile command when compiling <path>.    
+        Show compile command when compiling `path`.    
     -w [+-fFdDrRcCe]
         Set Walk verbose flags:
             
-            f   Show if we are forcing running of a command.
-            F   Show if we are forcing non-running of a command.
+            * **f**   Show if we are forcing running of a command.
+            * **F**   Show if we are forcing non-running of a command.
             
-            m   Show message if we are running command (only if d not specified).
-            M   Show message if we are not running command (only if d not specified).
+            * **m**   Show message if we are running command (only if d not specified).
+            * **M**   Show message if we are not running command (only if d not specified).
             
-            d   Show description if available, if we are running command.
-            D   Show description if available, if we are not running command.
+            * **d**   Show description if available, if we are running command.
+            * **D**   Show description if available, if we are not running command.
             
-            r   Show reason why a command is being run.
-            R   Show reason why a command is not being run.
+            * **r**   Show reason why a command is being run.
+            * **R**   Show reason why a command is not being run.
             
-            c   Show the command if we are running it.
-            C   Show the command if we are not running it.
+            * **c**   Show the command if we are running it.
+            * **C**   Show the command if we are not running it.
             
-            e   If command fails, show command if we haven't already shown it.
+            * **e**   If command fails, show command if we haven't already shown it.
         
         Default is 'der'.
         
@@ -193,15 +201,17 @@ Args:
 
 Requirements:
 
-    The walk.py command optimiser module.
+    The `walk.py` command optimiser module.
     
-    Packages for this script:
+    Packages for this script::
+    
         python3
         strace
     
     Packages for flightgear:
     
-        Linux:
+        * Linux::
+        
             apt install \
                 cmake \
                 freeglut3-dev \
@@ -230,10 +240,10 @@ Requirements:
                 qtdeclarative5-private-dev \
                 qttools5-dev \
                 qttools5-dev-tools \
-
                 openscenegraph \
     
-        OpenBSD:
+        * OpenBSD::
+        
             pkg_add \
                     freeglut \
                     openal \
@@ -255,7 +265,9 @@ import time
 import traceback
 import types
 
+sys.path.append( os.path.relpath( f'{__file__}/../..'))
 import walk
+del sys.path[-1]
 
 def time_duration( seconds, verbose=0, decimals=0, align=False):
     '''
@@ -264,16 +276,16 @@ def time_duration( seconds, verbose=0, decimals=0, align=False):
     seconds:
         Duration in seconds
     verbose:
-        If 0, return things like: 4d3h2m23.4s
-        If 1, return things like: 4d 3h 2m 23.4s
-        If 2, return things like: 4 days 1 hour 2 mins 23.4 secs
+        * If 0, return things like: 4d3h2m23.4s.
+        * If 1, return things like: 4d 3h 2m 23.4s.
+        * If 2, return things like: 4 days 1 hour 2 mins 23.4 secs.
     decimals:
         Number of fractional decimal digits for seconds.
     align:
-        If true, we pad items with leading spaces (verbose==2) or zeros
-        (verbose=0 or verbose=1) to make returned text have fixed alignment. If
-        2, we also pad positive durations with a space so that positive and
-        negative durations align.
+        If true, we pad items with leading spaces (`verbose==2`) or zeros
+        (`verbose=0` or `verbose=1`) to make returned text have fixed
+        alignment. If `2`, we also pad positive durations with a space so that
+        positive and negative durations align.
     
     >>> m=60
     >>> h=m*60
@@ -366,7 +378,7 @@ class LogPrefix:
     Creates dynamic prefix text showing elapsed time and progress as a
     percentage.
     
-    Code should update self.progress between 0 and 1 to indicate progress.
+    Code should update `self.progress` between `0` and `1` to indicate progress.
     '''
     def __init__( self):
         self.t0 = time.time()
@@ -416,8 +428,8 @@ def system_out( text):
 
 def system( command, walk_path, description=None, verbose=None):
     '''
-    Wrapper for walk.system() which sets default verbose and force flags, and
-    raises an exception if the command fails instead of returning an error
+    Wrapper for `walk.system()` which sets default verbose and force flags,
+    and raises an exception if the command fails instead of returning an error
     value.
     '''
     if verbose is None:
@@ -443,7 +455,7 @@ def system_concurrent(
         command_compare=None,
         ):
     '''
-    Wrapper for walk_concurrent.system() which sets default verbose and force
+    Wrapper for `walk_concurrent.system()` which sets default verbose and force
     flags.
     '''
     if verbose is None:
@@ -462,7 +474,7 @@ def system_concurrent(
 
 def file_write( text, path, verbose=None):
     '''
-    Wrapper for walk.file_write() which uses g_walk_verbose and g_force.
+    Wrapper for `walk.file_write()` which uses `g_walk_verbose` and `g_force`.
     '''
     if verbose == None:
         verbose = g_walk_verbose
@@ -471,14 +483,14 @@ def file_write( text, path, verbose=None):
 
 def cmp(a, b):
     '''
-    Not sure why python3 dropped cmp(), but this recreates it.
+    Not sure why python3 dropped `cmp()`, but this recreates it.
     '''
     return (a > b) - (a < b) 
 
 
 def get_gitfiles( directory):
     '''
-    Returns list of all files known to git in <directory>; <directory> must be
+    Returns list of all files known to git in `directory`; `directory` must be
     somewhere within a git checkout.
     '''
     command = 'cd ' + directory + '; git ls-files .'
@@ -504,18 +516,18 @@ def git_id( directory):
 
 def get_files( target):
     '''
-    Returns (all, cpp) where <all> is list of files known to git and <cpp> is
-    subset of these files that are not headers and are used to build <target>.
+    Returns `(all, cpp)` where `all` is list of files known to git and `cpp` is
+    subset of these files that are not headers and are used to build `target`.
     
     We find all files known to git, then prune out various files which we don't
     want to include in the build.
     
     target:
         One of:
-            fgfs
-            props-test
-            test-suite
-            yasim-test
+            * 'fgfs'
+            * 'props-test'
+            * 'test-suite'
+            * 'yasim-test'
     '''
     
     exclude_patterns = [
@@ -972,8 +984,8 @@ class CompileFlags:
     
     def add( self, path_prefixes, flags):
         '''
-        Add <flags> when compiling source files which start with any item in
-        <path_prefixes>.
+        Add `flags` when compiling source files which start with any item in
+        `path_prefixes`.
         '''
         assert flags == '' or flags.startswith( ' ')
         flags = flags.replace( ' -D ', ' -D')
@@ -984,7 +996,7 @@ class CompileFlags:
     
     def get_flags( self, path):
         '''
-        Returns compile flags to use when compiling <path>.
+        Returns compile flags to use when compiling `path`.
         '''
         ret = ''
         for path_prefixes, flags in self.items:
@@ -998,9 +1010,9 @@ class CompileFlags:
     
     def get_flags_all( self, path):
         '''
-        Returns compile flags for compiling <path>, using a union of all flags
+        Returns compile flags for compiling `path`, using a union of all flags
         (except for warning flags which are still calculated specifically for
-        <path>).
+        `path`).
         '''
         ret_flags = set()
         ret = ''
@@ -1033,9 +1045,9 @@ class CompileFlags:
 
 def make_compile_flags( libs_cflags, cpp_feature_defines):
     '''
-    Returns a CompileFlags instance set up for building Flightgear.
+    Returns a `CompileFlags` instance set up for building Flightgear.
     
-    (libs_cflags, cpp_feature_defines) are particular pre-defined flags that
+    `(libs_cflags, cpp_feature_defines)` are particular pre-defined flags that
     our caller passes to us that have been found by running config tests and/or
     pkg-add.
     '''     
@@ -1521,7 +1533,7 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
 
 class Timing:
     '''
-    Internal item for Timings class.
+    Internal item for `Timings` class.
     '''
     def __init__( self, name):
         self.name = name
@@ -1541,7 +1553,8 @@ class Timings:
     Allows gathering of hierachical timing information. Can also generate useful
     diagnostics.
     
-    Caller can generate a tree of Timing items via our begin() and end() methods.
+    Caller can generate a tree of `Timing` items via our `.begin()` and `.end()`
+    methods.
     
     >>> ts = Timings()
     >>> ts.begin('a')
@@ -1577,9 +1590,9 @@ class Timings:
         name:
             Used in final statistics.
         text:
-            If not None, this is output here with walk.log().
+            If not `None`, this is output here with `walk.log()`.
         level:
-            Verbosity. Added to g_verbose.
+            Verbosity. Added to `g_verbose`.
         '''
         if g_verbose + level >= 1 and text is not None:
             walk.log( f'{text}')
@@ -1607,7 +1620,7 @@ class Timings:
     def end( self, name=None):
         '''
         Ends currently-running timing and its parent items until we reach one
-        matching <name>.
+        matching `name`.
         '''
         # end all until we have reached <name>.
         t = time.time()
@@ -1640,7 +1653,7 @@ class Timings:
 
 def do_compile(target, walk_concurrent, cc_base, cpp_base, cf, path, preprocess=False, force=None):
     '''
-    Schedules compile of <path> (if necessary). Returns name of .o file.
+    Schedules compile of `path` (if necessary). Returns name of `.o` file.
     
     target:
         One of:
@@ -1817,8 +1830,8 @@ def compilers_base():
 
 def get_cpp_feature_defines( timings, cpp_base):
     '''
-    Returns string containing list of -D options, from running tests extracted
-    (crudely with regex) from .cmake file.
+    Returns string containing list of `-D` options, from running tests
+    extracted (crudely with regex) from `.cmake` file.
     '''
     cpp_feature_defines = ''
     if g_openbsd:
@@ -1848,13 +1861,13 @@ def get_cpp_feature_defines( timings, cpp_base):
 
 def get_lib_flags():
     '''
-    Returns (libs, libs_cflags, libs_linkflags):
+    Returns `(libs, libs_cflags, libs_linkflags)`:
         libs
             List of libraries we should link with.
         libs_cflags
-            Compile flags from pkg-config for <libs>.
+            Compile flags from `pkg-config` for `libs`.
         libs_linkflags
-            Link flags from pkg-config for <libs>.
+            Link flags from `pkg-config` for `libs`.
     '''
     # Libraries for which we call pkg-config:
     #
@@ -1893,7 +1906,7 @@ def get_lib_flags():
 
 def preprocess( timings, target, path, walk_=None):
     '''
-    Preprocess <path>, writing to <target>.c or <target.cpp.
+    Preprocess `path`, writing to `<target>.c` or `<target>.cpp`.
 
     Uses same code as for normal compilation, so should be representative.
     '''
@@ -1915,7 +1928,7 @@ def preprocess( timings, target, path, walk_=None):
 
 def build( timings, target):
     '''
-    Builds <target> using g_* settings.
+    Builds `target` using `g_*` settings.
     
     target:
         One of:
@@ -2580,7 +2593,7 @@ def build( timings, target):
 
 def get_args( argv):
     '''
-    Generator that iterates over argv items. Does getopt-style splitting of
+    Generator that iterates over `argv` items. Does getopt-style splitting of
     args starting with single '-' character.
     '''
     for arg in argv:
@@ -2602,57 +2615,59 @@ def exception_info(
     '''
     Shows an exception and/or backtrace.
 
-    Alternative to traceback.* functions that print/return
-    information about exceptions and backtraces, such as:
+    Alternative to `traceback.*` functions that print/return information about
+    exceptions and backtraces, such as::
 
         traceback.format_exc()
         traceback.format_exception()
         traceback.print_exc()
         traceback.print_exception()
 
-    Install as system default with:
+    Install as system default with::
+    
         sys.excepthook = lambda type_, exception, traceback: exception_info( exception, chain='reverse')
 
-    Returns None, or the generated text if <file> is 'return'.
+    Returns `None`, or the generated text if `file` is 'return'.
 
     Args:
         exception_or_traceback:
-            None, an Exception or a types.TracebackType. If None we use current
-            exception from sys.exc_info(), otherwise the current backtrace from
-            inspect.stack().
+            `None`, an `Exception` or a `types.TracebackType`. If `None` we
+            use current exception from `sys.exc_info()`, otherwise the current
+            backtrace from `inspect.stack()`.
         limit:
-            As in traceback.* functions: None to show all frames, positive to
-            show last <limit> frames, negative to exclude outermost -limit
+            As in `traceback.*` functions: `None` to show all frames, positive
+            to show last `limit` frames, negative to exclude outermost `-limit`
             frames.
         file:
-            As in traceback.* functions: file-like object to which we write
-            output, or sys.stderr if None. Special value 'return' makes us
+            As in `traceback.*` functions: file-like object to which we write
+            output, or `sys.stderr` if `None`. Special value 'return' makes us
             return our output as a string.
         chain:
-            As in traceback.* functions: if true we show chained exceptions as
-            described in PEP-3134. Special value 'because' reverses the usual
-            ordering, showing higher-level exceptions first and joining with
-            'Because:' text.
+            As in `traceback.* functions`: if true we show chained exceptions
+            as described in PEP-3134. Special value 'because' reverses the
+            usual ordering, showing higher-level exceptions first and joining
+            with 'Because:' text.
         outer:
             If true (the default) we also show an exception's outer frames
-            above the catch block (see below for details). We use outer=false
+            above the catch block (see below for details). We use `outer=False`
             for chained exceptions to avoid duplication.
         _filelinefn:
-            Internal only; used with doctest - makes us omit file:line:
+            Internal only; used with `doctest` - makes us omit `file:line:`
             information to allow simple comparison with expected output.
 
-    Differences from traceback.* functions:
+    Differences from `traceback.*` functions:
 
-        Frames are displayed as one line in the form:
+        Frames are displayed as one line in the form::
+        
             <file>:<line>:<function>: <text>
 
         Filenames are displayed as relative to the current directory if
         applicable.
 
         Inclusion of outer frames:
-            Unlike traceback.* functions, stack traces for exceptions include
+            Unlike `traceback.*` functions, stack traces for exceptions include
             outer stack frames above the point at which an exception was caught
-            - frames from the top-level <module> or thread creation to the
+            - frames from the top-level `module` or thread creation to the
             catch block. [Search for 'sys.exc_info backtrace incomplete' for
             more details.]
 
@@ -2661,7 +2676,7 @@ def exception_info(
             caught the exception and 'raise:' refers downwards to the frame
             that raised the exception.
 
-            So the backtrace for an exception looks like this:
+            So the backtrace for an exception looks like this::
 
                 <file>:<line>:<fn>: <text>  [in root module.]
                 ...                         [... other frames]
@@ -2674,9 +2689,9 @@ def exception_info(
     Examples:
 
         Define some nested function calls which raise and except and call
-        exception_info(). We use file=sys.stdout so we can check the output
-        with doctest, and set _filelinefn=0 so that the output can be matched
-        easily.
+        `exception_info()`. We use `file=sys.stdout` so we can check the output
+        with `doctest`, and set `_filelinefn=0` so that the output can be
+        matched easily.
 
         >>> def a():
         ...     b()
@@ -2699,7 +2714,7 @@ def exception_info(
         the doctest code itself.
 
         With chain=True (the default), we output low-level exceptions first,
-        matching the behaviour of traceback.* functions:
+        matching the behaviour of `traceback.*` functions:
 
         >>> g_chain = True
         >>> a() # doctest: +REPORT_UDIFF +ELLIPSIS
