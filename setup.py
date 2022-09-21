@@ -34,6 +34,9 @@ p = pipcl.Package(
             'Programming Language :: Python',
             'Topic :: Software Development :: Build Tools',
             ],
+        project_url = [
+            'Documentation, https://walk.readthedocs.io/',
+            ],
 
         fn_build=build,
         fn_sdist=sdist,
