@@ -6,6 +6,7 @@ import os
 import resource
 import shutil
 import subprocess
+import sys
 import textwrap
 import time
 
@@ -465,8 +466,10 @@ def init(
         
         _fs_write( f'{directory}/index.rst', text)
 
+root = os.path.abspath( f'{__file__}/../..')
+sys.path.append( root)
 init(
         name='Walk',
         author_='Julian Smith',
-        python_dirs='../walk',
+        python_dirs=f'{root}/walk',
         )
