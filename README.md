@@ -183,7 +183,12 @@ walk/__init__.py -h
 ```
 
 
-## Related projects
+## Links
+
+* Development: [https://github.com/cgdae/walk](https://github.com/cgdae/walk)
+* Docs: [https://walk.readthedocs.io/](https://walk.readthedocs.io/)
+
+### Related projects
 
 * [https://code.google.com/archive/p/fabricate/](https://code.google.com/archive/p/fabricate/)
 * [https://github.com/buildsome/buildsome/](https://github.com/buildsome/buildsome/)
