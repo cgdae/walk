@@ -29,7 +29,7 @@ def system(
     that the command would not change output files.
     
     Returns:
-        None if we did not run the command. Otherwise a subprocess-style
+        `None` if we did not run the command. Otherwise a subprocess-style
         integer termination status: zero or positive exit code, or negative
         signal number
     
@@ -582,8 +582,8 @@ def _ensure_parent_dir( path):
 
 def _date_time( t=None):
     '''
-    Returns `t` in the form YYYY-MM-DD-HH:MM:SS. If `t` is None, we use current
-    date and time.
+    Returns `t` in the form YYYY-MM-DD-HH:MM:SS. If `t` is `None`, we use
+    current date and time.
     '''
     if t is None:
         t = time.time()
@@ -592,7 +592,7 @@ def _date_time( t=None):
 
 def _get_verbose( v):
     '''
-    Returns <v> or default verbose settings if <v> is None.
+    Returns <v> or default verbose settings if <v> is `None`.
     '''
     if v is None:
         return 'de'
@@ -732,14 +732,14 @@ def _system(
             A string, the command to run.
         out:
             Where the command's stdout and stderr go:
-                None:
-                    If both out_prefix and out_buffer are false, the command's
-                    output goes to the inherited stdout/stderr. Otherwise it is
-                    sent to our stdout.
+                `None`:
+                    If both `out_prefix` and `out_buffer` are false,
+                    the command's output goes to the inherited
+                    stdout/stderr. Otherwise it is sent to our stdout.
                 
-                A callable taking single <text> param.
+                A callable taking single `text` param.
                 
-                Object with .write() method taking single <text> param.
+                Object with `.write()` method taking single `text` param.
                 
                 Integer >= 0, a file descriptor.
                 
@@ -749,19 +749,19 @@ def _system(
             If true, we also capture the output text and include it in the
             returned information.
         throw:
-            If true, we raise a CommandFailed exception if command failed.
+            If true, we raise a `CommandFailed` exception if command failed.
         encoding:
             The encoding to use when decoding child output. Ignored if false.
         encoding_errors:
-            The codecs module's 'errors' param if <encoding> is specified.
+            The codecs module's 'errors' param if `encoding` is specified.
         out_prefix:
-            If not None, prepended to each line sent to <out>. Not included
-            in output returned if <capture> is true.
+            If not `None`, prepended to each line sent to `out`. Not included
+            in output returned if `capture` is true.
         out_buffer:
-            If true, we buffer up output and send to <out> in one call after
+            If true, we buffer up output and send to `out` in one call after
             command has terminated.
     Returns:
-        Returned value depends on <out_capture> and <throw>:
+        Returned value depends on `out_capture` and `throw`:
         
         capture throw   Return
         ---------------------------
