@@ -467,9 +467,10 @@ def init(
         _fs_write( f'{directory}/index.rst', text)
 
 root = os.path.abspath( f'{__file__}/../..')
-sys.path.append( root)
+sys.path.append( f'{root}/walkbuild')
+print(f'sys.path.[-1]: {sys.path[-1]}')
 init(
         name='Walk',
         author_='Julian Smith',
-        python_dirs=f'{root}/walk',
+        python_dirs=f'{root}/walkbuild',
         )

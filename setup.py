@@ -9,8 +9,8 @@ import pipcl
 
 def build():
     return [
-            'walk/__init__.py',
-            'walk/walkfg.py',
+            'walkbuild/walk.py',
+            'walkbuild/walkfg.py',
             ('README.md', '$dist-info/README.md'),
             ]
 
@@ -21,7 +21,7 @@ with open( 'README.md') as f:
     description = f.read()
 
 p = pipcl.Package(
-        name='walk',
+        name='walkbuild',
         version='0',
         summary='Command optimiser - run commands only if they might change generated files.',
         description=description,

@@ -477,35 +477,7 @@ def log_ping( text, interval):
         log( text)
 
 
-#
-# Everything below here is internal implementation details, and not for
-# external use.
-#
-
-import codecs
-import hashlib
-import io
-import os
-import pickle
-import queue
-import re
-import subprocess
-import sys
-import textwrap
-import threading
-import time
-
-
-_force_new_files = set()
-_mtime_new = 3600*24*365*10*1000
-_mtime_cache = dict()
-_file_hash_cache = dict()
-_osname = os.uname()[0]
-_linux = ( _osname == 'Linux')
-_openbsd = ( _osname == 'OpenBSD')
-
-
-def _mtime( path, default=None):
+def mtime( path, default=None):
     '''
     Returns mtime of file, or <default> if error - e.g. doesn't
     exist. Caches previously-returned information, so it's important to call
@@ -523,74 +495,18 @@ def _mtime( path, default=None):
     return t
 
 
-def _file_hash(path):
-    '''
-    Returns hash digest of <path> or -1 if it does not exist.
-    '''
-    global _file_hash_cache
-    ret = _file_hash_cache.get(path)
-    if ret is None:
-        try:
-            with open(path, 'rb') as f:
-                contents = f.read()
-            ret = hashlib.md5(contents).digest()
-        except:
-            ret = -1
-            # Must be true so we can reuse as 'open for reading' flag, but !=
-            # True.
-        _file_hash_cache[path] = ret
-    return ret
-
-
-def _mtime_cache_clear( path=None):
-    global _mtime_cache
-    global _file_hash_cache
-    if path:
-        _mtime_cache.pop( path, None)
-        _file_hash_cache.pop( path, None)
-    else:
-        _mtime_cache = dict()
-        _file_hash_cache = dict()
-
-
-def _mtime_cache_mark_new( path):
+def mtime_cache_mark_new( path):
     path = os.path.abspath( path)
     _mtime_cache[ path] = _mtime_new
     _force_new_files.add( path)
 
 
-def _mtime_cache_mark_old( path):
+def mtime_cache_mark_old( path):
     path = os.path.abspath( path)
     _mtime_cache[ path] = 0
 
 
-def _remove( filename):
-    '''
-    Removes file without error if we fail or it doesn't exist.
-    '''
-    try:
-        os.remove( filename)
-    except Exception:
-        pass
-
-
-def _ensure_parent_dir( path):
-    parent = os.path.dirname( path)
-    if parent:
-        os.makedirs( parent, exist_ok=True)
-
-
-def _date_time( t=None):
-    '''
-    Returns `t` in the form YYYY-MM-DD-HH:MM:SS. If `t` is `None`, we use
-    current date and time.
-    '''
-    if t is None:
-        t = time.time()
-    return time.strftime( "%F-%T", time.gmtime( t))
-
-
-def _get_verbose( v):
+def get_verbose( v):
     '''
     Returns <v> or default verbose settings if <v> is `None`.
     '''
@@ -599,7 +515,7 @@ def _get_verbose( v):
     return v
 
 
-def _file_write( text, path, verbose=None, force=None):
+def file_write( text, path, verbose=None, force=None):
     '''
     If file <path> exists and contents are already <text>, does
     nothing. Otherwise writes <text> to file <path>.
@@ -608,7 +524,7 @@ def _file_write( text, path, verbose=None, force=None):
 
     <verbose> and <force> are as in walk.system().
     '''
-    verbose = _get_verbose( verbose)
+    verbose = get_verbose( verbose)
     try:
         text0 = open( path).read()
     except OSError:
@@ -643,6 +559,90 @@ def _file_write( text, path, verbose=None, force=None):
                 message += f' Not updating {path}'
         if message:
             log( message.strip())
+
+
+#
+# Everything below here is internal implementation details, and not for
+# external use.
+#
+
+import codecs
+import hashlib
+import io
+import os
+import pickle
+import queue
+import re
+import subprocess
+import sys
+import textwrap
+import threading
+import time
+
+
+_force_new_files = set()
+_mtime_new = 3600*24*365*10*1000
+_mtime_cache = dict()
+_file_hash_cache = dict()
+_osname = os.uname()[0]
+_linux = ( _osname == 'Linux')
+_openbsd = ( _osname == 'OpenBSD')
+
+
+def _file_hash(path):
+    '''
+    Returns hash digest of <path> or -1 if it does not exist.
+    '''
+    global _file_hash_cache
+    ret = _file_hash_cache.get(path)
+    if ret is None:
+        try:
+            with open(path, 'rb') as f:
+                contents = f.read()
+            ret = hashlib.md5(contents).digest()
+        except:
+            ret = -1
+            # Must be true so we can reuse as 'open for reading' flag, but !=
+            # True.
+        _file_hash_cache[path] = ret
+    return ret
+
+
+def _mtime_cache_clear( path=None):
+    global _mtime_cache
+    global _file_hash_cache
+    if path:
+        _mtime_cache.pop( path, None)
+        _file_hash_cache.pop( path, None)
+    else:
+        _mtime_cache = dict()
+        _file_hash_cache = dict()
+
+
+def _remove( filename):
+    '''
+    Removes file without error if we fail or it doesn't exist.
+    '''
+    try:
+        os.remove( filename)
+    except Exception:
+        pass
+
+
+def _ensure_parent_dir( path):
+    parent = os.path.dirname( path)
+    if parent:
+        os.makedirs( parent, exist_ok=True)
+
+
+def _date_time( t=None):
+    '''
+    Returns `t` in the form YYYY-MM-DD-HH:MM:SS. If `t` is `None`, we use
+    current date and time.
+    '''
+    if t is None:
+        t = time.time()
+    return time.strftime( "%F-%T", time.gmtime( t))
 
 
 def _make_diagnostic( verbose, command, description, reason, doit):
@@ -1010,7 +1010,7 @@ def _system_check( walk_path, command, command_compare=None, force=None, use_has
                 # messes things up unless we ignore it.
                 continue
 
-        # _mtime() can be slow so we only call it if we need to. If we have
+        # mtime() can be slow so we only call it if we need to. If we have
         # called it, we put the result into <t>.
         t = -1
 
@@ -1021,12 +1021,12 @@ def _system_check( walk_path, command, command_compare=None, force=None, use_has
         if read_or_hash and not write and ret < 0:
             # Open for reading failed last time.
             if t == -1:
-                t = _mtime( path)
+                t = mtime( path)
             if t:
                 # File exists, so it might open successfully this time,
                 # so pretend it is new.
                 #
-                if 0: log( f'forcing walk_path t={_date_time( _mtime( walk_path))} walk_path={walk_path} path={path}')
+                if 0: log( f'forcing walk_path t={_date_time( mtime( walk_path))} walk_path={walk_path} path={path}')
                 newest_read = time.time()
                 newest_read_path = path
         if read_or_hash and ret >= 0:
@@ -1046,7 +1046,7 @@ def _system_check( walk_path, command, command_compare=None, force=None, use_has
                     #if read_or_hash == -1:
                     #    log(f'No previous has for: {path}')
                     if t == -1:
-                        t = _mtime( path)
+                        t = mtime( path)
                     if t and t > read_hash_changed_mtime:
                         read_hash_changed_mtime = t
                         read_hash_changed_path = path
@@ -1060,7 +1060,7 @@ def _system_check( walk_path, command, command_compare=None, force=None, use_has
             if 1:
                 #log(f'read_or_hash not hash: {read_or_hash}')
                 if t == -1:
-                    t = _mtime( path)
+                    t = mtime( path)
                 if t:
                     if newest_read == None or t > newest_read:
                         newest_read = t
@@ -1075,7 +1075,7 @@ def _system_check( walk_path, command, command_compare=None, force=None, use_has
         if write and ret >= 0:
             # Open for writing succeeded.
             if t == -1:
-                t = _mtime( path)
+                t = mtime( path)
             if t:
                 if oldest_write == None or t < oldest_write:
                     oldest_write = t
@@ -1159,7 +1159,7 @@ def _system_doit(
         ...
             Other args are same as in walk.system().
     '''
-    verbose = _get_verbose( verbose)
+    verbose = get_verbose( verbose)
     
     if not doit:
         message = _make_diagnostic( verbose, command, description, reason, doit)
@@ -2023,8 +2023,8 @@ def _make_preload( walk_file):
     if not _make_preload_up_to_date:
         with _make_preload_lock:
             if not _make_preload_up_to_date:
-                _file_write( _preload_c, path_c)
-                if _mtime( path_c, 0) > _mtime( path_lib, 0):
+                file_write( _preload_c, path_c)
+                if mtime( path_c, 0) > mtime( path_lib, 0):
                     ldl = '-ldl' if _linux else ''
                     command = f'cc -g -W -Wall -shared -fPIC {ldl} -o {path_lib} {path_c}'
                     #log( f'building preload library with: {command}')
@@ -2063,14 +2063,14 @@ def _do_test( use_hash, method):
             # Testing with compilation.
             #
             with LogPrefixScope( 'compilation: '):
-                _file_write( '''
+                file_write( '''
                         #include "walk_test_foo.h"
                         int main(){ return 0;}
                         '''
                         ,
                         build_c
                         )
-                _file_write( '''
+                file_write( '''
                         '''
                         ,
                         build_h
@@ -2090,19 +2090,19 @@ def _do_test( use_hash, method):
                 assert os.path.isfile( build_walkfile)
 
                 log( '== testing rebuild with no changes')
-                t = _mtime( build_exe)
+                t = mtime( build_exe)
                 time.sleep(1)
                 _mtime_cache_clear()
                 e = system( command, build_walkfile, verbose='cderR', out=log, out_prefix='    ', method=method, use_hash=use_hash)
                 assert e is None
-                t2 = _mtime( build_exe)
+                t2 = mtime( build_exe)
                 assert t2 == t, f'{_date_time(t)} => {_date_time(t2)}'
 
                 log( '== testing rebuild with modified header')
                 _mtime_cache_clear()
                 os.system( f'touch {build_h}')
                 e = system( command, build_walkfile, verbose='cderR', out=log, out_prefix='    ', method=method, use_hash=use_hash)
-                t2 = _mtime( build_exe)
+                t2 = mtime( build_exe)
                 if use_hash:
                     assert e is None
                     assert t2 == t
@@ -2114,7 +2114,7 @@ def _do_test( use_hash, method):
                 _mtime_cache_clear()
                 os.system( f'echo >> {build_h}')
                 e = system( command, build_walkfile, verbose='cderR', out=log, out_prefix='    ', method=method, use_hash=use_hash)
-                t2 = _mtime( build_exe)
+                t2 = mtime( build_exe)
                 assert e == 0
                 assert t2 > t
 
@@ -2291,7 +2291,7 @@ def _main():
         
         elif arg == '--new':
             path = next( args)
-            _mtime_cache_mark_new( path)
+            mtime_cache_mark_new( path)
         
         elif arg == '--test':
             if _openbsd:

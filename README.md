@@ -18,9 +18,9 @@ command reads and/or writes.
 
 * Tested and used on Linux and OpenBSD.
 
-* Also provided is an example Python script `walkfg.py` which uses Walk to work
-as a build system for the [Flightgear](https://flightgear.org) open-source
-flight simulator.
+* Also provided is an example Python script `walkbuild/walkfg.py` which uses
+Walk to work as a build system for the [Flightgear](https://flightgear.org)
+open-source flight simulator.
 
 
 ## Use as a build system
@@ -28,16 +28,16 @@ flight simulator.
 Walk allows a build system to be written simply as a list of commands to be
 run, with no need for explicit dependency information.
 
-By specifying these commands as calls to the function `walk.system()`, one
-ensures that they will not be run if the command would not modify any existing
-generated files. So only the commands that are necessary to bring things up to
-date, will be run.
+By specifying these commands as calls to the function
+`walkbuild.walk.system()`, one ensures that they will not be run if the command
+would not modify any existing generated files. So only the commands that are
+necessary to bring things up to date, will be run.
 
 For example to build a project consisting of two `.c` files, one could do (in
 Python):
 
 ```python
-import walk
+import walkbuild.walk as walk
 walk.system( 'cc -c -o foo.o foo.c', 'foo.o.walk')
 walk.system( 'cc -c -o bar.o bar.c', 'bar.o.walk')
 walk.system( 'cc -o myapp foo.o bar.o', 'myapp.walk')
@@ -57,7 +57,7 @@ walk.system( 'cc -o myapp foo.o bar.o', 'myapp.walk')
 * **Allow control over ordering of commands**
 
     Unlike conventional build systems, one can control the order in which
-    commands are run. For example the `walkfg.py` Flightgear build script
+    commands are run. For example the `walkbuild/walkfg.py` Flightgear build script
     compiles newer source files first, which often finds compilation errors
     more quickly when one is developing.
 
@@ -67,8 +67,8 @@ walk.system( 'cc -o myapp foo.o bar.o', 'myapp.walk')
 
     One can provide a custom comparison function, which allows one to avoid
     re-running commands if they are changed in only a trivial way. For example
-    the `walkfg.py` Flightgear build script ignores changes to the compiler's
-    `-W*` warning flags.
+    the `walkbuild/walkfg.py` Flightgear build script ignores changes to the
+    compiler's `-W*` warning flags.
 
 * **Verbose output only on failure**
 
@@ -88,6 +88,8 @@ complete.
 For example:
 
 ```python
+import walkbuild.walk as walk
+
 # Create multiple internal worker threads.
 #
 walk_concurrent = walk.Concurrent( num_threads=3)
@@ -168,12 +170,12 @@ interrupted, and will always re-run the command.
 
 Walk is primarily a python module, but can also be used from the command line:
 
-    walk/__init__.py <args> <walk-path> <command> ...
+    walkbuild/walk.py <args> <walk-path> <command> ...
 
 For example:
 
 ```shell
-walk.py myapp.exe.walk cc -Wall -W -o myapp.exe foo.c bar.c
+walkbuild/walk.py myapp.exe.walk cc -Wall -W -o myapp.exe foo.c bar.c
 ```
 
 For more information run:

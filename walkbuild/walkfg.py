@@ -24,7 +24,7 @@ Example usage:
     
     * Build Flightgear::
     
-        ./walk/walk/walkfg.py -b
+        ./walk/walkbuild/walkfg.py -b
     
     * Run Flightgear::
     
@@ -43,7 +43,7 @@ Details:
     In this directory, run this script (wherever it happens to be) with the
     '-b' flag so it builds Flightgear::
     
-        .../walkfg.py -b
+        .../walkbuild/walkfg.py -b
     
     All generated files will be in a new directory::
     
@@ -137,7 +137,7 @@ Args:
                     && make install \
                     && cd ../../ \
                     ) 2>&1|tee out
-            .../walkfg.py --osg openscenegraph/build/install -b
+            .../walkbuild/walkfg.py --osg openscenegraph/build/install -b
     
             time (true \
                     && cd openscenegraph \
@@ -148,7 +148,7 @@ Args:
                     && VERBOSE=1 make -j 3 \
                     && VERBOSE=1 make install \
                     ) 2>&1|tee out
-            .../walkfg.py --osg openscenegraph/build-relwithdebinfo/install -b    
+            .../walkbuild/walkfg.py --osg openscenegraph/build-relwithdebinfo/install -b    
     
     -o fgfs | test-suite | props-test | yasim-test
         Set what to build. Default is **fgfs**, the main Flightgear executable.    
@@ -265,8 +265,8 @@ import time
 import traceback
 import types
 
-sys.path.append( os.path.relpath( f'{__file__}/../..'))
-import walk
+sys.path.append( os.path.relpath( f'{__file__}/../'))
+import walk 
 del sys.path[-1]
 
 def time_duration( seconds, verbose=0, decimals=0, align=False):
