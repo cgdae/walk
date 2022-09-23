@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 
-r'''
-    Build script for Flightgear on Unix systems.
+'''
+Build script for Flightgear on Unix systems.
 
-    Copyright 2020-2022 Julian Smith.
-    SPDX-License-Identifier: GPL-3.0-only
+Copyright (C) 2020-2022 Julian Smith.
+SPDX-License-Identifier: GPL-3.0-only
 
 
 Example usage:

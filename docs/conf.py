@@ -1,7 +1,8 @@
 '''
-Example build command: PYTHONPATH=. sphinx-build -M html docs docs/_build
+Example build command: sphinx-build -M html docs docs/_build
 '''
 
+import glob
 import os
 import resource
 import shutil
@@ -154,7 +155,6 @@ def _fs_remove( path):
 
 
 def init(
-        #directory,
         name,
         author_=None,
         rst_dirs=None,
@@ -196,8 +196,8 @@ def init(
             Author.
         rst_dirs:
             A list (or comma-separated string) of directories containing
-            (typically hand-written) `.rst` files to be included in the
-            documentation.
+            (typically hand-written) `.rst` or `.md` files to be included in
+            the documentation.
         clib_dirs:
             A list (or comma-separated string) of directories with C/C++
             headers to document, using `exhale`/`breathe`/`doxygen` to extract
@@ -242,7 +242,7 @@ def init(
     Example commands:
         python3 -m venv pylocal
         . pylocal/bin/activate
-        pip install --upgrade pip sphinx sphinx_rtd_theme breathe exhale
+        pip install --upgrade pip sphinx sphinx_rtd_theme breathe exhale myst_parser
         (cd docs && sphinx-build -M html . _build)
     '''
     directory = os.path.abspath( f'{__file__}/..')
@@ -321,66 +321,6 @@ def init(
         breathe_default_project = "myproject"
         autoclass_content = 'both'  # So sphinx includes __init__()'s doc-comment.
 
-        # Setup the exhale extension
-        if 0:
-            exhale_args = {
-
-                    # These arguments are required
-                    "containmentFolder":     "./api_exhale",
-                    "rootFileName":          "library_root.rst",
-                    "doxygenStripFromPath":  "..",
-
-                    # Heavily encouraged optional argument (see docs)
-                    "rootFileTitle":         f"{name} Library API",
-
-                    # Suggested optional arguments
-                    "createTreeView":        False,
-
-                    # TIP: if using the sphinx-bootstrap-theme, you need
-                    # "treeViewIsBootstrap": True,
-                    "exhaleExecutesDoxygen": True,
-
-                    "exhaleDoxygenStdin":    "INPUT =  ../../include/mupdf/helpers ../../platform/c++/include/mupdf/exceptions.h"
-            }
-        
-        
-        if 0:
-            log( 'Creating default conf.py and index.rst with sphinx-quickstart.')
-            theme_arg = '' if theme == '' else f' -d {theme}'
-            _system(
-                    f'cd {directory}'
-                        ' && sphinx-quickstart'
-                        f' --author {shlex.quote(author_)}'
-                        f' --ext-autodoc'
-                        f' --ext-doctest'
-                        f' --extensions {",".join(extensions)}'
-                        f' --language en'
-                        f' --no-batchfile'
-                        f' --no-makefile'
-                        f' --no-sep'
-                        f' --project {shlex.quote(name)}'
-                        f' --release ""'
-                        f'{theme_arg}'
-                        f' .'
-                        ,
-                    )
-
-            # Modify default conf.py.
-            _log( f'Post-processing default {directory}/conf.py.')
-            conf_py_path = f'{directory}/conf.py'
-            text = jlib.fs_read( conf_py_path)
-            if theme:
-                # `sphinx-quickstart -d <theme>` doesn't seem to work, so we manually
-                # patch conf.py here.
-                _log( f'Changing theme to: {theme}')
-                text = re.sub( '(html_theme *=.*)', f'html_theme = "{theme}"', text)
-            else:
-                _log( 'Not changing theme.')
-            text += '\n'
-        
-        #text += 'default_role = "py:obj"\n'
-        #text += '{"python": ("https://docs.python.org/3", None)}'
-        
         os.makedirs( f'{directory}/_build/html/_static', exist_ok=True)
         with open( f'{directory}/_build/html/_static/makedocs_custom.css', 'w') as f:
             if black_foreground:
@@ -420,22 +360,23 @@ def init(
                         env_extra=env_pythonpath,
                         )
 
-        # Copy `.rst` files specified by `rst_dirs` (directories containing
-        # typically hand-written `.rst`files) into `<directory>/`.
+        # Copy `.rst` and `.md` files specified by `rst_dirs` (directories
+        # containing typically hand-written `.rst` and `.md` files) into
+        # `<directory>/`.
         #
         rst_hand_written = set()
         if rst_dirs:
-            # Copy hand-written .rst files into `<directory>/`.
+            # Copy hand-written `.rst` and `.md` files into `<directory>/`.
             for rst_dir in rst_dirs:
-                for path in glob.glob( f'{rst_dir}/*.rst'):
-                    if path.endswith( '/index.rst'):
+                for path in glob.glob( f'{rst_dir}/*.rst') + glob.glob( f'{rst_dir}/*.md'):
+                    if path.endswith( '/index.rst') or path.endswith( '/index.md'):
                         continue
                     path_leaf = os.path.basename( path)
                     if path_leaf in rst_hand_written:
-                        raise Exception( f'Duplicate hand-written rst leafname: {path}')
+                        raise Exception( f'Duplicate hand-written .rst/.md leafname: {path}')
                     rst_hand_written.add( path_leaf)
                     destination = f'{directory}/{path_leaf}'
-                    jlib.fs_copy( path, destination)
+                    shutil.copy2( path, destination)
         
         # Create index.rst.
         #
@@ -452,7 +393,7 @@ def init(
 
                 ''')
         for rst in rst_hand_written:
-            text += f'    {os.path.basename(rst)}\n'
+            text += f'   {os.path.basename(rst)}\n'
                 
         # Add clib documentation to index.rst.
         if clib_dirs:
@@ -466,11 +407,18 @@ def init(
         
         _fs_write( f'{directory}/index.rst', text)
 
+
 root = os.path.abspath( f'{__file__}/../..')
-sys.path.append( f'{root}/walkbuild')
-print(f'sys.path.[-1]: {sys.path[-1]}')
+
 init(
         name='Walk',
         author_='Julian Smith',
         python_dirs=f'{root}/walkbuild',
+        extensions_='myst_parser',  # Support for .md files.
+        rst_dirs=root,  # Include README.md.
         )
+
+# Add walkbuild/ directory to sys.path so that sphinx will find walk.py and
+# walkfg.py.
+#
+sys.path.append( f'{root}/walkbuild')

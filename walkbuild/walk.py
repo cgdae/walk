@@ -5,7 +5,7 @@ Provides a mechanism for running external commands which avoids actually
 running these commands if we can infer that they would not change any generated
 files.
 
-Copyright 2020-2022 Julian Smith.
+Copyright (C) 2020-2022 Julian Smith.
 
 SPDX-License-Identifier: GPL-3.0-only
 '''
@@ -479,9 +479,10 @@ def log_ping( text, interval):
 
 def mtime( path, default=None):
     '''
-    Returns mtime of file, or <default> if error - e.g. doesn't
-    exist. Caches previously-returned information, so it's important to call
-    _mtime_cache_clear() if a file is updated in between calls to walk.mtime().
+    Returns mtime of file, or `default` if error - e.g. doesn't
+    exist. Caches previously-returned information, so it's important to
+    call `_mtime_cache_clear()` if a file is updated in between calls to
+    `walk.mtime()`.
     '''
     global _mtime_cache
     t = _mtime_cache.get( path, -1)
@@ -508,7 +509,7 @@ def mtime_cache_mark_old( path):
 
 def get_verbose( v):
     '''
-    Returns <v> or default verbose settings if <v> is `None`.
+    Returns `v` or default verbose settings if `v` is `None`.
     '''
     if v is None:
         return 'de'
@@ -517,12 +518,12 @@ def get_verbose( v):
 
 def file_write( text, path, verbose=None, force=None):
     '''
-    If file <path> exists and contents are already <text>, does
-    nothing. Otherwise writes <text> to file <path>.
+    If file `path` exists and contents are already `text`, does
+    nothing. Otherwise writes `text` to file `path`.
 
     Will raise an exception if something goes wrong.
 
-    <verbose> and <force> are as in walk.system().
+    `verbose` and `force` are as in walk.system().
     '''
     verbose = get_verbose( verbose)
     try:

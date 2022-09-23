@@ -181,7 +181,7 @@ walkbuild/walk.py myapp.exe.walk cc -Wall -W -o myapp.exe foo.c bar.c
 For more information run:
 
 ```shell
-walk/__init__.py -h
+./walkbuild/walk.py -h
 ```
 
 
@@ -235,5 +235,5 @@ files by grepping for missing symbols names.
 
 ## License
 
-    Copyright 2020-2022 Julian Smith.
+    Copyright (C) 2020-2022 Julian Smith.
     SPDX-License-Identifier: GPL-3.0-only
