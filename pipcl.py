@@ -710,7 +710,7 @@ class Package:
                     assert '\n' not in value, f'key={key} value contains newline: {value!r}'
                     ret[0] += f'{key}: {value}\n'
         #add('Description', self.description)
-        add('Metadata-Version', '1.2')
+        add('Metadata-Version', '2.1')
         
         # These names are from:
         # https://packaging.python.org/specifications/core-metadata/
