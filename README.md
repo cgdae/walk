@@ -18,6 +18,8 @@ command reads and/or writes.
 
 * Tested and used on Linux and OpenBSD.
 
+* Install with: `pip install walkbuild`
+
 * Also provided is an example Python script `walkbuild/walkfg.py` which uses
 Walk to work as a build system for the [Flightgear](https://flightgear.org)
 open-source flight simulator.
@@ -189,6 +191,7 @@ For more information run:
 
 * Development: [https://github.com/cgdae/walk](https://github.com/cgdae/walk)
 * Docs: [https://walk.readthedocs.io/](https://walk.readthedocs.io/)
+* Pypi: [https://pypi.org/project/walkbuild/](https://pypi.org/project/walkbuild/)
 
 ### Related projects
 
