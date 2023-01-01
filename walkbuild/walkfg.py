@@ -2198,7 +2198,7 @@ def build( timings, target):
         rcc_out = f'{g_outdir}/walk-generated/flightgear/src/GUI/qrc_resources.cpp'
         if g_openbsd:
             system(
-                    f'rcc -name resources -o {rcc_out} {rcc_in}',
+                    f'/usr/local/lib/qt5/bin/rcc -name resources -o {rcc_out} {rcc_in}',
                     f'{rcc_out}.walk',
                     f'Running rcc on {rcc_in}',
                     )
