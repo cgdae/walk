@@ -4,14 +4,17 @@ Support for Python packaging operations.
 
 import base64
 import distutils.util
+import glob
 import hashlib
 import io
 import os
 import platform
+import re
 import shutil
 import site
 import subprocess
 import sys
+import sysconfig
 import tarfile
 import textwrap
 import time
@@ -334,15 +337,15 @@ class Package:
                     f'Root-Is-Purelib: false\n'
                     f'Tag: {tag}\n'
                     ,
-                    f'{dist_info_dir}WHEEL',
+                    f'{dist_info_dir}/WHEEL',
                     )
             # Add <name>-<version>.dist-info/METADATA.
             #
-            add_str(self._metainfo(), f'{dist_info_dir}METADATA')
+            add_str(self._metainfo(), f'{dist_info_dir}/METADATA')
             
             # Update <name>-<version>.dist-info/RECORD. This must be last.
             #
-            z.writestr(f'{dist_info_dir}RECORD', record.get())
+            z.writestr(f'{dist_info_dir}/RECORD', record.get())
 
         _log( f'build_wheel(): Have created wheel: {path}')
         return os.path.basename(path)
@@ -446,44 +449,62 @@ class Package:
                 shutil.rmtree(path, ignore_errors=True)
 
 
-    def argv_install(self, record_path, root):
+    def argv_install(self, record_path, root, verbose=False):
         '''
         Called by `handle_argv()`.
         '''
+        if verbose:
+            _log( f'argv_install(): {record_path=} {root=}')
+        
+        # Do a build and get list of files to install.
+        #
         items = []
         if self.fn_build:
             items = self.fn_build()
 
         if root is None:
-            # We install to the first item in site.getsitepackages()[] that exists.
-            #
-            sitepackages_all = site.getsitepackages()
-            for p in sitepackages_all:
-                if os.path.exists(p):
-                    root = p
-                    break
-            else:
-                text = 'No item exists in site.getsitepackages():\n'
-                for i in sitepackages_all:
-                    text += f'    {i}\n'
-                raise Exception(text)
+            root = sysconfig.get_path('platlib')
+            if verbose:
+                _log( f'argv_install(): Using sysconfig.get_path("platlib")={root!r}.')
+            # todo: for pure-python we should use sysconfig.get_path('purelib') ?
         
-        record = _Record() if record_path else None
+        _log( f'argv_install(): Installing into {root=}')
+        dist_info_dir = self._dist_info_dir()
+        
+        if not record_path:
+            record_path = f'{root}/{dist_info_dir}/RECORD'
+        record = _Record()
+        
+        def add_file(from_abs, from_rel, to_abs, to_rel):
+            if verbose:
+                _log(f'argv_install(): copying from {from_abs} to {to_abs}')
+            os.makedirs( os.path.dirname( to_abs), exist_ok=True)
+            shutil.copy2( from_abs, to_abs)
+            if verbose:
+                _log(f'argv_install(): adding to record: {from_rel=} {to_rel=}')
+            record.add_file(from_rel, to_rel)
+
+        def add_str(content, to_abs, to_rel):
+            if verbose:
+                _log( f'argv_install(): Writing to: {to_abs}')
+            with open( to_abs, 'w') as f:
+                f.write( content)
+            record.add_content(content, to_rel)
+        
         for item in items:
             (from_abs, from_rel), (to_abs, to_rel) = self._fromto(item)
-            to_path = f'{root}/{to_rel}'
-            _log(f'copying from {from_abs} to {to_path}')
-            os.makedirs( os.path.dirname( to_path), exist_ok=True)
-            shutil.copy2( from_abs, f'{to_path}')
-            if record:
-                # Could maybe use relative path of to_path from root/.
-                record.add_file(from_abs, to_path)
+            to_abs2 = f'{root}/{to_rel}'
+            add_file( from_abs, from_rel, to_abs2, to_rel)
+        
+        add_str( self._metainfo(), f'{root}/{dist_info_dir}/METADATA', f'{dist_info_dir}/METADATA')
 
-        if record:
-            with open(record_path, 'w') as f:
-                f.write(record.get())
+        if verbose:
+            _log( f'argv_install(): Writing to: {record_path}')
+        with open(record_path, 'w') as f:
+            f.write(record.get())
 
-        _log(f'argv_install(): Finished.')
+        if verbose:
+            _log(f'argv_install(): Finished.')
 
 
     def argv_dist_info(self, egg_base):
@@ -591,10 +612,9 @@ class Package:
                                 Creates files in <egg-base>/.egg-info/, where
                                 <egg-base> is as specified with --egg-base.
                             install
-                                Installs into location from Python's
-                                site.getsitepackages() array. Writes installation
-                                information to <record> if --record
-                                was specified.
+                                Builds and installs. Writes installation
+                                information to <record> if --record was
+                                specified.
                             sdist
                                 Make a source distribution:
                                     <dist-dir>/<name>-<version>.tar.gz
@@ -689,7 +709,7 @@ class Package:
             )
 
     def _dist_info_dir( self):
-        return f'{self.name}-{self.version}.dist-info/'
+        return f'{self.name}-{self.version}.dist-info'
 
     def _metainfo(self):
         '''
@@ -749,7 +769,7 @@ class Package:
             ret += '\n'
         return ret
 
-    def _path_relative_to_root(self, path):
+    def _path_relative_to_root(self, path, assert_within_root=True):
         '''
         Returns `(path_abs, path_rel)`, where `path_abs` is absolute path and
         `path_rel` is relative to `self.root_sep`.
@@ -758,14 +778,16 @@ class Package:
 
         We use `os.path.realpath()` to resolve any links.
 
-        Assert-fails if `path` is not within `self.root_sep`.
+        if assert_within_root is true, assert-fails if `path` is not within
+        `self.root_sep`.
         '''
         if os.path.isabs(path):
             p = path
         else:
             p = os.path.join(self.root_sep, path)
         p = os.path.realpath(os.path.abspath(p))
-        assert p.startswith(self.root_sep), f'Path not within root={self.root_sep}: {path}'
+        if assert_within_root:
+            assert p.startswith(self.root_sep), f'Path not within root={self.root_sep}: {path}'
         p_rel = os.path.relpath(p, self.root_sep)
         return p, p_rel
 
@@ -780,8 +802,8 @@ class Package:
         If `to_` starts with `$dist-info/`, we replace this with
         `self._dist_info_dir()`.
 
-        `from_abs` and `to_abs` are absolute paths, asserted to be within
-        `self.root_sep`.
+        `from_abs` and `to_abs` are absolute paths. We assert that `to_abs` is
+        `within self.root_sep`.
 
         `from_rel` and `to_rel` are derived from the `_abs` paths and are
         `relative to self.root_sep`.
@@ -797,8 +819,10 @@ class Package:
         from_, to_ = ret
         prefix = '$dist-info/'
         if to_.startswith( prefix):
-            to_ = f'{self._dist_info_dir()}{to_[ len(prefix):]}'
-        return self._path_relative_to_root(from_), self._path_relative_to_root(to_)
+            to_ = f'{self._dist_info_dir()}/{to_[ len(prefix):]}'
+        from_ = self._path_relative_to_root( from_, assert_within_root=False)
+        to_ = self._path_relative_to_root(to_)
+        return from_, to_
 
 
 # Functions that might be useful.
@@ -884,3 +908,248 @@ class _Record:
 
     def get(self):
         return self.text
+
+
+def cpu_name():
+    '''
+    Returns 'x32' or 'x64' depending on Python build.
+    '''
+    #log(f'sys.maxsize={hex(sys.maxsize)}')
+    return f'x{32 if sys.maxsize == 2**31 else 64}'
+
+class WindowsCpu:
+    '''
+    For Windows only. Paths and names that depend on cpu.
+
+    Members:
+        .bits
+            32 or 64.
+        .windows_subdir
+            '' or 'x64/', e.g. platform/win32/x64/Release.
+        .windows_name
+            'x86' or 'x64'.
+        .windows_config
+            'x64' or 'Win32', e.g. /Build Release|x64
+        .windows_suffix
+            '64' or '', e.g. mupdfcpp64.dll
+    '''
+    def __init__(self, name=None):
+        if not name:
+            name = cpu_name()
+        self.name = name
+        if name == 'x32':
+            self.bits = 32
+            self.windows_subdir = ''
+            self.windows_name = 'x86'
+            self.windows_config = 'Win32'
+            self.windows_suffix = ''
+        elif name == 'x64':
+            self.bits = 64
+            self.windows_subdir = 'x64/'
+            self.windows_name = 'x64'
+            self.windows_config = 'x64'
+            self.windows_suffix = '64'
+        else:
+            assert 0, f'Unrecognised cpu name: {name}'
+
+    def __str__(self):
+        return self.name
+
+
+def python_version():
+    '''
+    Returns two-digit version number of Python as a string, e.g. '3.9'.
+    '''
+    return '.'.join(platform.python_version().split('.')[:2])
+
+
+class WindowsPython:
+    '''
+    Windows only. Information aboutinstalled Python with specific word size and
+    version.
+
+    Members:
+
+        path:
+            Path of python binary.
+        version:
+            Version as a string, e.g. '3.9'. Same as <version> if not None,
+            otherwise the inferred version.
+        root:
+            The parent directory of <path>; allows
+            Python headers to be found, for example
+            <root>/include/Python.h.
+        cpu:
+            A WindowsCpu instance, same as <cpu> if not None, otherwise the
+            inferred cpu.
+
+    We parse the output from 'py -0p' to find all available python
+    installations.
+    '''
+    
+    def __init__( self, cpu=None, version=None):
+        '''
+        cpu:
+            A WindowsCpu instance. If None, we use whatever we are running on.
+        version:
+            Two-digit Python version as a string such as '3.8'. If None we use
+            current Python's version.
+
+        We parse the output from 'py -0p' to find all available python
+        installations.
+        '''
+        if cpu is None:
+            cpu = WindowsCpu(cpu_name())
+        if version is None:
+            version = python_version()
+        command = 'py -0p'
+        _log(f'Running: {command}')
+        text = subprocess.check_output( command, shell=True, text=True)
+        for line in text.split('\n'):
+            _log( f'    {line}')
+            m = re.match( '^ *-([0-9.]+)-((64)|(32)) +([^\\r*]+)[\\r*]*$', line)
+            if not m:
+                continue
+            version2 = m.group(1)
+            bits = int(m.group(2))
+            if bits != cpu.bits or version2 != version:
+                continue
+            path = m.group(5).strip()
+            root = path[ :path.rfind('\\')]
+            if not os.path.exists(path):
+                # Sometimes it seems that the specified .../python.exe does not exist,
+                # and we have to change it to .../python<version>.exe.
+                #
+                assert path.endswith('.exe'), f'path={path!r}'
+                path2 = f'{path[:-4]}{version}.exe'
+                _log( f'Python {path!r} does not exist; changed to: {path2!r}')
+                assert os.path.exists( path2)
+                path = path2
+
+            self.path = path
+            self.version = version
+            self.root = root
+            self.cpu = cpu
+            _log( f'pipcl.py:WindowsPython():')
+            _log( f'    root:    {self.root}')
+            _log( f'    path:    {self.path}')
+            _log( f'    version: {self.version}')
+            _log( f'    cpu:     {self.cpu}')
+            return
+
+        raise Exception( f'Failed to find python matching cpu={cpu}. Run "py -0p" to see available pythons')
+
+
+class WindowsVS:
+    '''
+    Finds locations of Visual Studio command-line tools. Assumes VS2019-style
+    paths.
+    
+    Members and example values:
+    
+        year:      2019
+        version:   14.28.29910
+        directory: C:\Program Files (x86)\Microsoft Visual Studio\2019\Community
+        vcvars:    C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Auxiliary\Build\vcvars64.bat
+        cl:        C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Tools\MSVC\14.28.29910\bin\Hostx64\x64\cl.exe
+        link:      C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Tools\MSVC\14.28.29910\bin\Hostx64\x64\link.exe
+        devenv:    C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\Common7\IDE\devenv.com
+    '''
+    def __init__( self, year=None, grade=None, version=None, cpu=None):
+        '''
+        Args:
+            year:
+                None or, for example, '2019'.
+            grade:
+                None or, for example:
+                    'Community'
+                    'Professional'
+                    'Enterprise'
+            version:
+                None or, for example: '14.28.29910'
+            cpu:
+                None or a WindowsCpu instance.
+        '''
+        if not cpu:
+            cpu = WindowsCpu()
+
+        # Find `directory`.
+        #
+        pattern = f'C:\\Program Files*\\Microsoft Visual Studio\\{year if year else "2*"}\\{grade if grade else "*"}'
+        directories = glob.glob( pattern)
+        assert directories, f'No match found for: {pattern}'
+        directories.sort()
+        directory = directories[-1]
+
+        # Find `devenv`.
+        #
+        devenv = f'{directory}\\Common7\\IDE\\devenv.com'
+        assert os.path.isfile( devenv), f'Does not exist: {devenv}'
+
+        # Extract `year` and `grade` from `directory`.
+        #    
+        # We use r'...' for regex strings because an extra level of escaping is
+        # required for backslashes.
+        #
+        m = re.match( rf'^C:\\Program Files.*\\Microsoft Visual Studio\\([^\\]+)\\([^\\]+)', directory)
+        assert m
+        year2 = m.group(1)
+        grade2 = m.group(2)
+        if year:
+            assert year2 == year
+        else:
+            year = year2
+        if grade:
+            assert grade2 == grade
+        else:
+            grade == grade2
+
+        # Find vcvars.bat.
+        #
+        vcvars = f'{directory}\\VC\Auxiliary\\Build\\vcvars{cpu.bits}.bat'
+        assert os.path.isfile( vcvars), f'No match for: {vcvars}'
+
+        # Find cl.exe.
+        #
+        cl_pattern = f'{directory}\\VC\\Tools\\MSVC\\{version if version else "*"}\\bin\\Host{cpu.windows_name}\\{cpu.windows_name}\\cl.exe'
+        cl_s = glob.glob( cl_pattern)
+        assert cl_s, f'No match for: {cl_pattern}'
+        cl_s.sort()
+        cl = cl_s[ -1]
+
+        # Extract `version` from cl.exe's path.
+        #
+        m = re.search( rf'\\VC\\Tools\\MSVC\\([^\\]+)\\bin\\Host{cpu.windows_name}\\{cpu.windows_name}\\cl.exe$', cl)
+        assert m
+        version2 = m.group(1)
+        if version:
+            assert version2 == version
+        else:
+            version = version2
+        assert version
+
+        # Find link.exe.
+        #
+        link_pattern = f'{directory}\\VC\\Tools\\MSVC\\{version}\\bin\\Host{cpu.windows_name}\\{cpu.windows_name}\\link.exe'
+        link_s = glob.glob( link_pattern)
+        assert link_s, f'No match for: {link_pattern}'
+        link_s.sort()
+        link = link_s[ -1]
+
+        self.year = year
+        self.version = version
+        self.directory = directory
+        self.vcvars = vcvars
+        self.cl = cl
+        self.link = link
+        self.devenv = devenv
+
+        _log( f'pipcl.py:WindowsVS():')
+        _log( f'    year:      {self.year}')
+        _log( f'    version:   {self.version}')
+        _log( f'    directory: {self.directory}')
+        _log( f'    vcvars:    {self.vcvars}')
+        _log( f'    cl:        {self.cl}')
+        _log( f'    link:      {self.link}')
+        _log( f'    devenv:    {self.devenv}')
+    
