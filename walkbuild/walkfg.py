@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-'''
+r'''
 Build script for Flightgear on Unix systems.
 
 Copyright (C) 2020-2022 Julian Smith.
@@ -74,8 +74,6 @@ Args:
         If 1, we force use of clang instead of system compiler. Default is 0.
     --debug 0 | 1
         If 1 (default), we compile and link with `-g` to include debug symbols.    
-    --optimise-prefix 0|1 <prefix>
-        Force optimise/no-optimise build for paths starting with `prefix`.
     --doctest
         Run doctest on this module.    
     --flags-all 0 | 1
@@ -121,6 +119,12 @@ Args:
         Treat `path` as old.    
     --optimise 0 | 1
         If 1 (the default), we build with compiler optimisations.    
+    --optimise-prefix 0|1 <prefix>
+        Force optimise/no-optimise build for paths starting with
+        `prefix`. Disabling optimisation helps debugging - compiled code
+        closely matches the source code so line numbers etc work better. For
+        example `--optimise-prefix 0 flightgear/src/FDM/YASim/` helps debugging
+        YASim code.
     --osg-dir <directory>
         Use local OSG install instead of system OSG.
         
@@ -171,7 +175,7 @@ Args:
     -t
         Show detailed timing information at end.    
     -v
-        Increase diagnostics (use `-v` to decrease).    
+        Increase diagnostics (use `-q` to decrease).
     --v-src <path>
         Show compile command when compiling `path`.    
     -w [+-fFdDrRcCe]
@@ -590,6 +594,7 @@ def get_files( target):
             'flightgear/src/Input/fgjs.cxx',
             'flightgear/src/Input/js_demo.cxx',
             'flightgear/src/Main/metar_main.cxx',
+            'flightgear/src/Main/nasal-bin.cxx',
             'flightgear/src/Navaids/awynet.cxx',
             'flightgear/src/Network/HLA/hla.cxx',
             'flightgear/src/Scripting/ClipboardFallback.cxx',
@@ -668,10 +673,15 @@ def get_files( target):
             'simgear/simgear/misc/swap_test.cpp',
             'simgear/simgear/misc/tabbed_values_test.cxx',
             'simgear/simgear/misc/utf8tolatin1_test.cxx',
+            
+            'simgear/simgear/nasal/',
             'simgear/simgear/nasal/cppbind/test/cppbind_test.cxx',
             'simgear/simgear/nasal/cppbind/test/cppbind_test_ghost.cxx',
             'simgear/simgear/nasal/cppbind/test/nasal_gc_test.cxx',
             'simgear/simgear/nasal/cppbind/test/nasal_num_test.cxx',
+            'simgear/simgear/nasal/unixlib.c',
+            'simgear/simgear/nasal/nasal-bin.c',
+            
             'simgear/simgear/package/CatalogTest.cxx',
             'simgear/simgear/package/pkgutil.cxx',
             'simgear/simgear/props/easing_functions_test.cxx',
@@ -982,27 +992,45 @@ class CompileFlags:
     def __init__( self):
         self.items = []
     
-    def add( self, path_prefixes, flags):
+    def add( self, path_prefixes, flags, path_suffixes=None):
         '''
         Add `flags` when compiling source files which start with any item in
         `path_prefixes`.
+        
+        If `path_suffixes` is specified, it should be a list/tuple of strings,
+        and we exclude paths if they do not end with any of these strings. For
+        example this can be useful to exclude some flags when compiling C files
+        - specify `path_suffixes=('.cpp', '.cxx')`.
         '''
         assert flags == '' or flags.startswith( ' ')
         flags = flags.replace( ' -D ', ' -D')
         flags = flags.replace( ' -I ', ' -I')
         if isinstance( path_prefixes, str):
             path_prefixes = path_prefixes,
-        self.items.append( ( path_prefixes, flags))
+        self.items.append( ( path_prefixes, path_suffixes, flags))
     
     def get_flags( self, path):
         '''
         Returns compile flags to use when compiling `path`.
         '''
         ret = ''
-        for path_prefixes, flags in self.items:
+        for path_prefixes, path_suffixes, flags in self.items:
             for path_prefix in path_prefixes:
                 #walk.log( f'looking at path_prefix: {path_prefix}')
+                match = False
                 if path.startswith( path_prefix):
+                    if path_suffixes:
+                        for path_suffix in path_suffixes:
+                            if path.endswith( path_suffix):
+                                #walk.log( f'{path_suffix=} matches {path=}. {flags=}')
+                                match = True
+                                break
+                        else:
+                            #walk.log( f'Excluding because does not match {path_suffixes=}: {path=}: {flags=}')
+                            pass
+                    else:
+                        match = True
+                if match:
                     #walk.log( f'adding flags: {flags}')
                     ret += flags
                     break
@@ -1089,7 +1117,8 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
             'flightgear/',
             'simgear/',
             ),
-            ' -Wno-deprecated-copy'
+            ' -Wno-deprecated-copy',
+            ('.cpp', '.cxx'),   # Avoid "cc1: warning: command line option -Wno-deprecated-copy is valid for C++/ObjC++ but not for C".
             )
 
     cf.add( (
@@ -1139,11 +1168,18 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
             'flightgear/src/Navaids/FlightPlan.cxx',
             'simgear/simgear/canvas/elements/CanvasImage.cxx',
             'simgear/simgear/canvas/layout/',
+            
             'simgear/simgear/nasal/codegen.c',
             'simgear/simgear/nasal/iolib.c',
             'simgear/simgear/nasal/parse.c',
             'simgear/simgear/nasal/utf8lib.c',
             'simgear/simgear/nasal/utf8lib.c',
+            
+            'simgear/simgear/nasal_cpp/codegen.c',
+            'simgear/simgear/nasal_cpp/iolib.c',
+            'simgear/simgear/nasal_cpp/parse.c',
+            'simgear/simgear/nasal_cpp/utf8lib.c',
+            'simgear/simgear/nasal_cpp/utf8lib.c',
             ),
             ' -Wno-sign-compare'
             )
@@ -1182,8 +1218,28 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
             'flightgear/src/Radio/itm.cpp',
             'simgear/simgear/structure/SGExpression.cxx',
             'simgear/simgear/structure/subsystem_mgr.cxx',
+            'flightgear/3rdparty/iaxclient/lib/audio_alsa.c',
             ),
             ' -Wno-unused-variable'
+            )
+    
+    cf.add( (
+            'flightgear/3rdparty/iaxclient/lib/libiax2/src/iax2-parser.c',
+            ),
+            ' -Wno-missing-field-initializers'
+            )
+
+    cf.add( (
+            'flightgear/3rdparty/iaxclient/lib/sox/compand.c',
+            ),
+            ' -Wno-absolute-value'
+            )
+            
+    cf.add( (
+            'flightgear/3rdparty/iaxclient/lib/gsm/src/gsm_create.c',
+            'flightgear/3rdparty/iaxclient/lib/gsm/src/gsm_destroy.c',
+            ),
+            ' -Wno-builtin-declaration-mismatch'
             )
 
     cf.add( (
@@ -1197,6 +1253,7 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
 
     cf.add( (
             'flightgear/3rdparty/flite_hts_engine/flite/src/lexicon/cst_lexicon.c',
+            'flightgear/3rdparty/flite_hts_engine/flite/lang/cmulex/cmu_lex.c',
             ),
             ' -Wno-discarded-qualifiers'
             )
@@ -1368,6 +1425,14 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
     
     cf.add( 'flightgear/src/Scripting/ClipboardX11.cxx',
             ' -D FLIGHTGEAR_WALK'
+            )
+
+    cf.add( 'flightgear/src/Navaids/NavDataCache.cxx',
+            ' -I flightgear/3rdparty/sqlite3'
+            )
+
+    cf.add( 'flightgear/src/Scripting/sqlitelib.cxx',
+            ' -I flightgear/3rdparty/sqlite3'
             )
 
     cf.add( 'flightgear/src/Sound',
