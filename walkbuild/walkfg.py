@@ -154,8 +154,11 @@ Args:
                     ) 2>&1|tee out
             .../walkbuild/walkfg.py --osg openscenegraph/build-relwithdebinfo/install -b    
     
-    -o fgfs | test-suite | props-test | yasim-test
-        Set what to build. Default is **fgfs**, the main Flightgear executable.    
+    -o fgfs | test-suite | props-test | yasim-test | simgear/...
+        Set what to build. Default is **fgfs**, the main Flightgear executable.
+        
+        If startswith `simgear/`, should be a C++ test file such as:
+        simgear/simgear/scene/model/animation_test.cxx
     --osg 0|1
         Experimental: if 1, we also compile files in `openscenegraph/` instead of
         using an existing build.
@@ -176,6 +179,8 @@ Args:
         Show detailed timing information at end.    
     -v
         Increase diagnostics (use `-q` to decrease).
+    --v-excludes
+        Show the matching pattern for each excluded source file.
     --v-src <path>
         Show compile command when compiling `path`.    
     -w [+-fFdDrRcCe]
@@ -422,6 +427,7 @@ g_props_locking = True
 g_frame_pointer = False
 g_ffmpeg = True
 g_optimise_prefixes = []
+g_verbose_excludes = False
 
 g_os = os.uname()[0]
 g_openbsd = (g_os == 'OpenBSD')
@@ -674,7 +680,7 @@ def get_files( target):
             'simgear/simgear/misc/tabbed_values_test.cxx',
             'simgear/simgear/misc/utf8tolatin1_test.cxx',
             
-            'simgear/simgear/nasal/',
+            'simgear/simgear/nasal-cpp/*',
             'simgear/simgear/nasal/cppbind/test/cppbind_test.cxx',
             'simgear/simgear/nasal/cppbind/test/cppbind_test_ghost.cxx',
             'simgear/simgear/nasal/cppbind/test/nasal_gc_test.cxx',
@@ -714,6 +720,7 @@ def get_files( target):
             'simgear/simgear/structure/subsystem_test.cxx',
             'simgear/simgear/structure/test_*',
             'simgear/simgear/timing/testtimestamp.cxx',
+            'simgear/simgear/timing/zonetest.cxx',
             'simgear/simgear/xml/testEasyXML.cxx',
             ]
     
@@ -837,7 +844,7 @@ def get_files( target):
                 'flightgear/src/FDM/YASim/yasim-test.cpp'
                 ]
     
-    if target in ( 'fgfs', 'yasim-test'):
+    if target in ( 'fgfs', 'yasim-test') or target.startswith( 'simgear/'):
         exclude_patterns += [
                 'flightgear/test_suite/*',
                 'flightgear/3rdparty/cppunit/*',
@@ -862,6 +869,11 @@ def get_files( target):
                 'plib/*',
                 ]
     
+    if target.startswith( 'simgear/'):
+        exclude_patterns += [
+                'flightgear/*',
+                'plib/*',
+                ]
     
     # We sort <exclude_patterns> so that we can short-cut the searches we do
     # below.
@@ -891,6 +903,8 @@ def get_files( target):
         for i, exclude_pattern in enumerate(exclude_patterns, exclude_patterns_pos):
             if exclude_pattern.endswith( '*'):
                 if path.startswith( exclude_pattern[:-1]):
+                    if g_verbose_excludes:
+                        walk.log(f'Excluding {path=} because matches {exclude_pattern=}')
                     include = False
                     break
             else:
@@ -905,6 +919,8 @@ def get_files( target):
                 
                 # <exclude_pattern> matches <path>, so exclude <path>.
                 if c == 0:
+                    if g_verbose_excludes:
+                        walk.log(f'Excluding {path=} because matches {exclude_pattern=}')
                     include = False
                     break
         if include:
@@ -945,6 +961,9 @@ def get_files( target):
             if i.startswith( 'simgear/'):
                 ret2.append( i)
         ret = ret2
+    
+    if target.startswith( 'simgear/'):
+        ret.append( target)
     
     return all_files, ret
 
@@ -1383,6 +1402,7 @@ def make_compile_flags( libs_cflags, cpp_feature_defines):
     cf.add( 'flightgear/src/Input/',
             ' -I flightgear/3rdparty/hidapi'
             ' -I flightgear/3rdparty/joystick'
+            ' -D WITH_EVENTINPUT'
             )
 
     cf.add( 'flightgear/3rdparty/fonts/',
@@ -2000,6 +2020,8 @@ def build( timings, target):
             fgfs
             test-suite
             props-test
+            simgear/.../foo_test.cxx
+                Builds specified C++ file with simgear.
     '''
     timings.begin( 'all', f'Building target={target}.', 2)
     
@@ -2022,7 +2044,13 @@ def build( timings, target):
     all_files, src_fgfs = get_files( target)
     timings.end( 'get_files')
 
-    if target != 'props-test' and target != 'yasim-test':
+    if (0
+            or target == 'props-test'
+            or target == 'yasim-test'
+            or target.startswith( 'simgear/')
+            ):
+        pass
+    else:
         
         # Run various commands to patch source code or run moc etc. We use
         # our system() which uses walk.system(), so after the first build we
@@ -2341,6 +2369,9 @@ def build( timings, target):
         exe = f'{g_outdir}/fgfs-props-test'
     elif target == 'yasim-test':
         exe = f'{g_outdir}/fgfs-yasim-test'
+    elif target.startswith( 'simgear/'):
+        exe = f'{g_outdir}/{target}.exe'
+        walk.log(f'{exe=}')
     else:
         assert 0, f'Unrecognised target={target}'
 
@@ -2629,13 +2660,18 @@ def build( timings, target):
         #   {g_outdir}/fgfs-run.exe
         #   {g_outdir}/fgfs-run-gdb.exe
         #
+        assert exe.startswith( f'{g_outdir}/')
+        exe_dir = os.path.dirname(exe)
+        exe_branch = exe[ len(g_outdir)+1:]
         exe_leaf = os.path.basename(exe)
         rhs = exe_leaf[:exe_leaf.find(',')]
         def make_link( suffix):
+            link_target = f'{exe_branch}{suffix}'
+            link_source = f'{rhs}{suffix}'
             if g_force or g_force is None:
-                os.system( f'cd {g_outdir} && ln -sf {exe_leaf}{suffix} {rhs}.exe{suffix}')
+                os.system( f'cd {g_outdir} && ln -sf {link_target} {link_source}')
             if g_verbose >= 0:
-                walk.log( f'{"Convenience link:":20s}{g_outdir}/{rhs}.exe{suffix} => {g_outdir}/{exe_leaf}{suffix}')
+                walk.log( f'{"Convenience link:":20s}{g_outdir}/{link_source} => {g_outdir}/{link_target}')
         make_link( '')
         make_link( '-run.sh')
         make_link( '-run-gdb.sh')
@@ -2918,6 +2954,7 @@ def main():
     global g_props_locking
     global g_show_timings
     global g_walk_verbose
+    global g_verbose_excludes
     
     do_build = False
     target = 'fgfs'
@@ -3064,14 +3101,20 @@ def main():
         elif arg == '-o':
             target = next( args)
             targets = 'fgfs test-suite props-test yasim-test'.split()
-            assert target in targets, \
-                    f'unrecognised target={target} should be one of: {" ".join(targets)}.'
+            if target.startswith( 'simgear/'):
+                assert os.path.isfile( target), f'File does not exist: {target}'
+            else:
+                assert target in targets, \
+                    f'unrecognised target={target} should be simgear/... or one of: {" ".join(targets)}.'
         
         elif arg == '-q':
             g_verbose -= 1
         
         elif arg == '-v':
             g_verbose += 1
+        
+        elif arg == '--v-excludes':
+            g_verbose_excludes = int( next( args))
         
         elif arg == '-w':
             v = next( args)
