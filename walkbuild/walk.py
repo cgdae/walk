@@ -1107,6 +1107,17 @@ def _system_check( walk_path, command, command_compare=None, force=None, use_has
         reason.append( f'hash changed: {os.path.relpath(read_hash_changed_path)}')
     elif oldest_write == 0:
         doit = True
+        if 0 and '.' not in oldest_write_path:
+            import json
+            #print(f'w. is:\n{json.dumps(w, indent="    ")}')
+            log(f'{w.command=}')
+            log(f'{w.t_begin=}')
+            log(f'{w.t_end=}')
+            #print(f'{w.path2info=}')
+            for n, v in w.path2info.items():
+                log( f'    {n}: {v!r}')
+            log(f'{w.verbose=}')
+            #assert 0, f'{oldest_write_path=} {walk_path=} {command=}'
         reason.append( f'Output file not present: {oldest_write_path}')
     elif newest_read > oldest_write:
         if use_hash and not use_mtime:
@@ -1277,7 +1288,7 @@ class _WalkFile:
         Add an attempt to open a file.
         '''
         if self.verbose:
-            print( f'open: ret={ret} r={r} w={w} path={path}')
+            log( f'open: ret={ret} r={r} w={w} path={path}')
         path = os.path.abspath( path)
         _mtime_cache_clear( path)
         # Look for earlier mention of <path>.
@@ -1300,7 +1311,7 @@ class _WalkFile:
         Add deletion of a file.
         '''
         if self.verbose:
-            print( f'delete: path={path}')
+            log( f'delete: path={path}')
         path = os.path.abspath( path)
         _mtime_cache_clear( path)
         self.path2info.pop( path, None)
@@ -1310,7 +1321,7 @@ class _WalkFile:
         Add a rename.
         '''
         if self.verbose:
-            print( f'rename: path_from={path_from} path_to={path_to}')
+            log( f'rename: path_from={path_from} path_to={path_to}')
         path_from = os.path.abspath( path_from)
         path_to = os.path.abspath( path_to)
         _mtime_cache_clear( path_from)
@@ -1353,6 +1364,7 @@ def _process_trace( command, strace_path, t_begin, t_end):
     walk = _WalkFile( command, t_begin, t_end)
     
     if _linux:
+        #log( f'Looking at {strace_path=}')
         with open( strace_path) as f:
             for line in f:
                 #log( f'line is: {line!r}')
@@ -1398,6 +1410,16 @@ def _process_trace( command, strace_path, t_begin, t_end):
                         from_ = m.group(1)
                         to_ = m.group(2)
                         walk.add_rename( from_, to_)
+                    continue
+                
+                m = re.match( '^[0-9]+ +unlink[(]"([^"]*)"[)] = ([0-9A-Z-]+).*\n$', line)
+                if m:
+                    #log( f'found unlink: {line!r}')
+                    ret = int( m.group(2))
+                    if ret == 0:
+                        path = m.group(1)
+                        walk.add_delete( path)
+                    continue
                 
     elif _openbsd:
         # Not sure how reliable this is. The output from kdump seems to have
@@ -2242,7 +2264,8 @@ def _main():
             command = ''
             for arg in args:
                 command += f' {arg}'
-            e = system( command, walk_path, verbose, force, method=method)
+            log( f'Running: {command}')
+            e = system( command, walk_path, force=force, method=method, verbose='cdemrCDEMR')
             sys.exit(e)
             
         if arg == '-h' or arg == '--help':
@@ -2325,7 +2348,7 @@ def _main():
                     t -= t0
                     break
                 _mtime_cache_clear = dict()
-            print( f'sec/it={t/i}')
+            log( f'sec/it={t/i}')
         
         elif arg == '--time-load-all':
             root = next( args)
